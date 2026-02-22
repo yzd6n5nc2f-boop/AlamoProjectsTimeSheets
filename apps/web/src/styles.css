@@ -311,6 +311,11 @@ p {
   background: #9e3245;
 }
 
+.btn-small {
+  padding: 6px 8px;
+  font-size: 0.78rem;
+}
+
 .table-wrap {
   overflow-x: auto;
   border-radius: 12px;
@@ -394,10 +399,37 @@ p {
   font-size: 0.92rem;
 }
 
+.week-divider td {
+  background: #dfe8f3;
+  color: #2a4465;
+  font-weight: 700;
+  font-size: 0.82rem;
+}
+
 .error-list {
   margin: 0;
   padding-left: 18px;
   color: var(--error-600);
+}
+
+.project-lines {
+  display: grid;
+  gap: 6px;
+}
+
+.project-line {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) 90px auto;
+  gap: 6px;
+}
+
+.hours-input {
+  text-align: right;
+}
+
+.muted-inline {
+  color: var(--text-muted);
+  font-size: 0.8rem;
 }
 
 .role-picker {
@@ -487,6 +519,12 @@ p {
   border-radius: 10px;
   padding: 9px 10px;
   margin-bottom: 12px;
+}
+
+.subtle-note {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  margin-bottom: 10px;
 }
 
 .timeline {

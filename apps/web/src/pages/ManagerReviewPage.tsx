@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Panel } from "../components/Panel";
 import { StatusChip } from "../components/StatusChip";
-import { minutesToHoursString } from "../lib/timesheetEngine";
+import { minutesToHoursString, sumProjectHours } from "../lib/timesheetEngine";
 import { statusTone } from "../lib/ui";
 import { useAppState } from "../state/AppStateContext";
 
@@ -48,9 +48,8 @@ export function ManagerReviewPage() {
           <thead>
             <tr>
               <th>Date</th>
-              <th>Day Type</th>
-              <th>Project</th>
-              <th>Hours</th>
+              <th>Projects</th>
+              <th>Total Hours</th>
               <th>Absence</th>
             </tr>
           </thead>
@@ -58,9 +57,15 @@ export function ManagerReviewPage() {
             {dayEntries.map((entry) => (
               <tr key={entry.date}>
                 <td>{entry.date}</td>
-                <td>{entry.dayType}</td>
-                <td>{entry.projectDescription || "--"}</td>
-                <td>{entry.hoursWorked.toFixed(2)}</td>
+                <td>
+                  {entry.projectLines.length === 0
+                    ? "--"
+                    : entry.projectLines
+                        .filter((line) => line.hours > 0 || line.projectDescription.trim().length > 0)
+                        .map((line) => `${line.projectDescription || "(No description)"} (${line.hours.toFixed(2)}h)`)
+                        .join(", ") || "--"}
+                </td>
+                <td>{sumProjectHours(entry).toFixed(2)}</td>
                 <td>{entry.absenceCode || "--"}</td>
               </tr>
             ))}

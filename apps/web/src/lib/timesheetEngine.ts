@@ -17,11 +17,16 @@ export interface RuleSettings {
   publicHolidays: string[];
 }
 
+export interface ProjectLine {
+  id: string;
+  projectDescription: string;
+  hours: number;
+}
+
 export interface DayEntry {
   date: string;
   dayType: DayType;
-  projectDescription: string;
-  hoursWorked: number;
+  projectLines: ProjectLine[];
   absenceCode: string;
   notes: string;
 }
@@ -112,24 +117,33 @@ export function resolveDayType(date: string, settings: RuleSettings): DayType {
   return "WORKDAY";
 }
 
+export function sumProjectHours(entry: DayEntry): number {
+  return entry.projectLines.reduce((sum, line) => sum + (Number.isFinite(line.hours) ? line.hours : 0), 0);
+}
+
 export function calculateDayEntry(entry: DayEntry, settings: RuleSettings, todayIso: string): DayCalculation {
   const blockingErrors: string[] = [];
   const warnings: string[] = [];
 
   const absenceCode = entry.absenceCode.trim();
   const hasAbsence = absenceCode.length > 0;
-  const workedMinutes = Math.round((Number(entry.hoursWorked) || 0) * 60);
 
   if (hasAbsence && !ABSENCE_CODES.has(absenceCode)) {
     blockingErrors.push("INVALID_ABSENCE_CODE");
   }
 
-  if (hasAbsence && workedMinutes > 0) {
-    blockingErrors.push("CODE_HOURS_CONFLICT");
+  for (const line of entry.projectLines) {
+    if (line.hours < 0) {
+      blockingErrors.push("NEGATIVE_TOTALS");
+      break;
+    }
   }
 
-  if (workedMinutes < 0) {
-    blockingErrors.push("NEGATIVE_TOTALS");
+  const workedHours = sumProjectHours(entry);
+  const workedMinutes = Math.round(workedHours * 60);
+
+  if (hasAbsence && workedMinutes > 0) {
+    blockingErrors.push("CODE_HOURS_CONFLICT");
   }
 
   if (workedMinutes > 16 * 60) {
@@ -154,9 +168,8 @@ export function calculateDayEntry(entry: DayEntry, settings: RuleSettings, today
 
   if (workedMinutes === 0) {
     const isFutureDay = entry.date > todayIso;
-    const isWeekend = entry.dayType === "WEEKEND";
 
-    if (!isFutureDay && !isWeekend) {
+    if (!isFutureDay) {
       if (entry.dayType === "PUBLIC_HOLIDAY") {
         blockingErrors.push("PH_CODE_REQUIRED");
       } else {
@@ -174,8 +187,11 @@ export function calculateDayEntry(entry: DayEntry, settings: RuleSettings, today
     };
   }
 
-  if (entry.projectDescription.trim().length === 0) {
-    blockingErrors.push("PROJECT_REQUIRED");
+  for (const line of entry.projectLines) {
+    if (line.hours > 0 && line.projectDescription.trim().length === 0) {
+      blockingErrors.push("PROJECT_DESCRIPTION_REQUIRED");
+      break;
+    }
   }
 
   if (blockingErrors.length > 0) {

@@ -7,6 +7,7 @@ import { auditMiddleware } from "./middleware/audit.middleware.js";
 import { fakeAuthMiddleware } from "./middleware/auth.middleware.js";
 import { requestIdMiddleware } from "./middleware/request-id.middleware.js";
 import { healthRouter } from "./routes/health.routes.js";
+import { sqliteRouter } from "./routes/sqlite.routes.js";
 import { systemRouter } from "./routes/system.routes.js";
 
 const logger = pino({
@@ -46,6 +47,7 @@ export function createApp() {
 
   app.use(healthRouter);
   app.use(systemRouter);
+  app.use(sqliteRouter);
 
   app.use((_req, res) => {
     res.status(404).json({

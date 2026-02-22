@@ -1,8 +1,8 @@
 import { Fragment, useMemo, useState } from "react";
 import { Panel } from "../components/Panel";
 import { StatusChip } from "../components/StatusChip";
+import { minutesToHoursString, sumProjectHours, type DayEntry } from "../lib/timesheetEngine";
 import { formatDate, shiftMonthKey, statusTone } from "../lib/ui";
-import { minutesToHoursString } from "../lib/timesheetEngine";
 import { useAppState } from "../state/AppStateContext";
 
 const ABSENCE_OPTIONS = ["", "AL", "SL", "LWOP", "PH"];
@@ -14,11 +14,52 @@ const ERROR_MESSAGES: Record<string, string> = {
   PH_CODE_REQUIRED: "Public holiday not worked must use PH code",
   CODE_HOURS_CONFLICT: "Absence code cannot be combined with worked hours",
   INVALID_ABSENCE_CODE: "Absence code is not allowed",
-  PROJECT_REQUIRED: "Project description is required when hours are entered"
+  PROJECT_DESCRIPTION_REQUIRED: "Project description is required for entered hours"
 };
 
 function isEditable(status: string): boolean {
   return status === "DRAFT" || status === "MANAGER_REJECTED";
+}
+
+function groupByWorkWeeks(entries: DayEntry[]): Array<{ label: string; entries: DayEntry[] }> {
+  const sorted = entries
+    .filter((entry) => {
+      const weekday = new Date(`${entry.date}T00:00:00`).getDay();
+      return weekday !== 0 && weekday !== 6;
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const groups: Array<{ label: string; entries: DayEntry[] }> = [];
+
+  let current: DayEntry[] = [];
+
+  for (const entry of sorted) {
+    const weekday = new Date(`${entry.date}T00:00:00`).getDay();
+
+    if (current.length === 0) {
+      current = [entry];
+      continue;
+    }
+
+    if (weekday === 1) {
+      groups.push({
+        label: `Week ${groups.length + 1}`,
+        entries: current
+      });
+      current = [entry];
+      continue;
+    }
+
+    current.push(entry);
+  }
+
+  if (current.length > 0) {
+    groups.push({
+      label: `Week ${groups.length + 1}`,
+      entries: current
+    });
+  }
+
+  return groups;
 }
 
 export function TimesheetEntryPage() {
@@ -27,35 +68,46 @@ export function TimesheetEntryPage() {
     dayEntries,
     computed,
     updateDayEntry,
+    addProjectLine,
+    updateProjectLine,
+    removeProjectLine,
     submitTimesheet,
     selectedMonth,
     setSelectedMonth,
     currentDateIso,
-    periodDisplayLabel
+    periodDisplayLabel,
+    sqliteSync
   } = useAppState();
   const [message, setMessage] = useState<string>("");
 
   const editable = isEditable(status);
 
-  const groupedByWeek = useMemo(() => {
-    const map = new Map<string, typeof dayEntries>();
-    for (const entry of dayEntries) {
-      const date = new Date(`${entry.date}T00:00:00`);
-      const yearStart = new Date(date.getFullYear(), 0, 1);
-      const dayOfYear = Math.floor((date.getTime() - yearStart.getTime()) / 86400000) + 1;
-      const week = `${date.getFullYear()}-W${String(Math.ceil(dayOfYear / 7)).padStart(2, "0")}`;
-      map.set(week, [...(map.get(week) ?? []), entry]);
-    }
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [dayEntries]);
+  const groupedWeeks = useMemo(() => groupByWorkWeeks(dayEntries), [dayEntries]);
 
   return (
     <Panel
       title="Monthly Timesheet Entry"
-      subtitle={`Month selected: ${periodDisplayLabel} (work week rows only)`}
-      actions={<StatusChip label={status.replaceAll("_", " ")} tone={statusTone(status)} />}
+      subtitle={`Month selected: ${periodDisplayLabel} (Monday-Friday grouped by week)`}
+      actions={
+        <>
+          <StatusChip label={status.replaceAll("_", " ")} tone={statusTone(status)} />
+          <StatusChip
+            label={
+              sqliteSync.state === "error"
+                ? "SQLite Error"
+                : sqliteSync.state === "saving"
+                  ? "SQLite Saving"
+                  : sqliteSync.state === "loading"
+                    ? "SQLite Loading"
+                    : "SQLite Synced"
+            }
+            tone={sqliteSync.state === "error" ? "bad" : sqliteSync.state === "saving" ? "warn" : "good"}
+          />
+        </>
+      }
     >
       {message ? <p className="alert">{message}</p> : null}
+      {sqliteSync.message ? <p className="subtle-note">{sqliteSync.message}</p> : null}
 
       <div className="form-grid">
         <div className="field">
@@ -81,9 +133,8 @@ export function TimesheetEntryPage() {
           <thead>
             <tr>
               <th>Date</th>
-              <th>Day Type</th>
-              <th>Project Description</th>
-              <th>Hours</th>
+              <th>Projects and Hours</th>
+              <th>Total Hours</th>
               <th>Absence</th>
               <th>Normal</th>
               <th>OT</th>
@@ -93,15 +144,36 @@ export function TimesheetEntryPage() {
             </tr>
           </thead>
           <tbody>
-            {groupedByWeek.map(([weekLabel, entries]) => {
-              const weekTotals = computed.weekly.find((item) => item.weekLabel === weekLabel)?.totals;
+            {groupedWeeks.map(({ label, entries }) => {
+              const weekDates = new Set(entries.map((entry) => entry.date));
+              const weekTotals = entries.reduce(
+                (acc, entry) => {
+                  const calc = computed.byDate[entry.date];
+                  acc.normal += calc?.normalMinutes ?? 0;
+                  acc.ot += calc?.overtimeMinutes ?? 0;
+                  acc.ph += calc?.phWorkedMinutes ?? 0;
+                  acc.leave += calc?.leaveMinutes ?? 0;
+                  acc.paid +=
+                    (calc?.normalMinutes ?? 0) +
+                    (calc?.overtimeMinutes ?? 0) +
+                    (calc?.phWorkedMinutes ?? 0) +
+                    (calc?.leaveMinutes ?? 0);
+                  return acc;
+                },
+                { normal: 0, ot: 0, ph: 0, leave: 0, paid: 0 }
+              );
 
               return (
-                <Fragment key={weekLabel}>
+                <Fragment key={label}>
+                  <tr className="week-divider">
+                    <td colSpan={9}>{label}</td>
+                  </tr>
+
                   {entries.map((entry) => {
                     const calc = computed.byDate[entry.date];
                     const errors = calc?.blockingErrors ?? [];
                     const isToday = entry.date === currentDateIso;
+                    const totalWorkedHours = sumProjectHours(entry);
 
                     return (
                       <tr
@@ -109,26 +181,52 @@ export function TimesheetEntryPage() {
                         className={`${errors.length > 0 ? "row-error" : ""} ${isToday ? "row-current" : ""}`.trim()}
                       >
                         <td>{formatDate(entry.date)}</td>
-                        <td>{entry.dayType}</td>
                         <td>
-                          <input
-                            value={entry.projectDescription}
-                            onChange={(event) => updateDayEntry(entry.date, { projectDescription: event.target.value })}
-                            placeholder="Project or task description"
-                            disabled={!editable || entry.absenceCode.length > 0}
-                          />
+                          <div className="project-lines">
+                            {entry.projectLines.length === 0 ? <p className="muted-inline">No project lines</p> : null}
+                            {entry.projectLines.map((line) => (
+                              <div className="project-line" key={line.id}>
+                                <input
+                                  value={line.projectDescription}
+                                  onChange={(event) =>
+                                    updateProjectLine(entry.date, line.id, { projectDescription: event.target.value })
+                                  }
+                                  placeholder="Project description"
+                                  disabled={!editable || entry.absenceCode.length > 0}
+                                />
+                                <input
+                                  value={line.hours}
+                                  onChange={(event) =>
+                                    updateProjectLine(entry.date, line.id, { hours: Number(event.target.value) || 0 })
+                                  }
+                                  type="number"
+                                  min={0}
+                                  max={24}
+                                  step={0.25}
+                                  disabled={!editable || entry.absenceCode.length > 0}
+                                  className="hours-input"
+                                />
+                                <button
+                                  type="button"
+                                  className="btn btn-small"
+                                  onClick={() => removeProjectLine(entry.date, line.id)}
+                                  disabled={!editable || entry.absenceCode.length > 0}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            ))}
+                            <button
+                              type="button"
+                              className="btn btn-small"
+                              onClick={() => addProjectLine(entry.date)}
+                              disabled={!editable || entry.absenceCode.length > 0}
+                            >
+                              + Add Project
+                            </button>
+                          </div>
                         </td>
-                        <td>
-                          <input
-                            value={entry.hoursWorked}
-                            onChange={(event) => updateDayEntry(entry.date, { hoursWorked: Number(event.target.value) || 0 })}
-                            type="number"
-                            min={0}
-                            max={24}
-                            step={0.25}
-                            disabled={!editable || entry.absenceCode.length > 0}
-                          />
-                        </td>
+                        <td>{totalWorkedHours.toFixed(2)}</td>
                         <td>
                           <select
                             value={entry.absenceCode}
@@ -162,12 +260,12 @@ export function TimesheetEntryPage() {
                   })}
 
                   <tr className="row-total">
-                    <td colSpan={5}>Weekly Totals ({weekLabel})</td>
-                    <td>{minutesToHoursString(weekTotals?.normalMinutes ?? 0)}</td>
-                    <td>{minutesToHoursString(weekTotals?.overtimeMinutes ?? 0)}</td>
-                    <td>{minutesToHoursString(weekTotals?.phWorkedMinutes ?? 0)}</td>
-                    <td>{minutesToHoursString(weekTotals?.leaveMinutes ?? 0)}</td>
-                    <td>{minutesToHoursString(weekTotals?.paidMinutes ?? 0)} paid</td>
+                    <td colSpan={4}>Weekly Totals ({label})</td>
+                    <td>{minutesToHoursString(weekTotals.normal)}</td>
+                    <td>{minutesToHoursString(weekTotals.ot)}</td>
+                    <td>{minutesToHoursString(weekTotals.ph)}</td>
+                    <td>{minutesToHoursString(weekTotals.leave)}</td>
+                    <td>{minutesToHoursString(weekTotals.paid)} paid</td>
                   </tr>
                 </Fragment>
               );
@@ -175,7 +273,7 @@ export function TimesheetEntryPage() {
           </tbody>
           <tfoot>
             <tr className="row-total period-total">
-              <td colSpan={5}>Month Totals</td>
+              <td colSpan={4}>Month Totals</td>
               <td>{minutesToHoursString(computed.periodTotals.normalMinutes)}</td>
               <td>{minutesToHoursString(computed.periodTotals.overtimeMinutes)}</td>
               <td>{minutesToHoursString(computed.periodTotals.phWorkedMinutes)}</td>

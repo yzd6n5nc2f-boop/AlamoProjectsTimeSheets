@@ -4,6 +4,7 @@ const envSchema = z.object({
   APP_ENV: z.enum(["development", "staging", "production"]).default("development"),
   API_PORT: z.coerce.number().int().positive().default(8080),
   DATABASE_URL: z.string().min(1),
+  SQLITE_PATH: z.string().default("apps/api/data/timesheet-local.sqlite"),
   CORS_ALLOWED_ORIGINS: z.string().default("http://localhost:5173"),
   JWT_ACCESS_SECRET: z.string().min(16).default("replace_me_access_secret"),
   JWT_REFRESH_SECRET: z.string().min(16).default("replace_me_refresh_secret")

@@ -3,6 +3,7 @@ import {
   type PropsWithChildren,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState
 } from "react";
@@ -11,7 +12,9 @@ import {
   getTodayIso,
   monthLabel,
   resolveDayType,
+  sumProjectHours,
   type DayEntry,
+  type ProjectLine,
   type RuleSettings,
   type WorkflowStatus
 } from "../lib/timesheetEngine";
@@ -48,6 +51,12 @@ interface MonthTimesheetState {
   managerNote: string;
 }
 
+interface SqliteSyncState {
+  state: "idle" | "loading" | "saving" | "ready" | "error";
+  message: string;
+  lastSavedAt: string | null;
+}
+
 interface AppStateValue {
   role: AppRole;
   setRole: (role: AppRole) => void;
@@ -65,7 +74,11 @@ interface AppStateValue {
   managerNote: string;
   setManagerNote: (value: string) => void;
   computed: ReturnType<typeof calculateTimesheet>;
+  sqliteSync: SqliteSyncState;
   updateDayEntry: (date: string, patch: Partial<DayEntry>) => void;
+  addProjectLine: (date: string) => void;
+  updateProjectLine: (date: string, lineId: string, patch: Partial<ProjectLine>) => void;
+  removeProjectLine: (date: string, lineId: string) => void;
   submitTimesheet: () => { ok: boolean; message: string };
   managerApprove: () => { ok: boolean; message: string };
   managerReject: () => { ok: boolean; message: string };
@@ -99,6 +112,7 @@ const INITIAL_RULES: RuleSettings = {
 };
 
 const ANNUAL_LEAVE_ENTITLEMENT_HOURS = 152;
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8080";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -115,6 +129,14 @@ function daysInMonth(monthKey: string): number {
   return new Date(year, month, 0).getDate();
 }
 
+function createProjectLine(hours = 0, projectDescription = ""): ProjectLine {
+  return {
+    id: `PL-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+    projectDescription,
+    hours
+  };
+}
+
 function buildMonthEntries(monthKey: string, settings: RuleSettings, todayIso: string): DayEntry[] {
   const [yearText, monthText] = monthKey.split("-");
   const year = Number(yearText);
@@ -127,7 +149,7 @@ function buildMonthEntries(monthKey: string, settings: RuleSettings, todayIso: s
     const date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
     const weekday = new Date(`${date}T00:00:00`).getDay();
 
-    // Monthly grid shows only work week rows (Mon-Fri).
+    // Show only Monday-Friday rows.
     if (weekday === 0 || weekday === 6) {
       continue;
     }
@@ -139,8 +161,7 @@ function buildMonthEntries(monthKey: string, settings: RuleSettings, todayIso: s
       entries.push({
         date,
         dayType,
-        projectDescription: "",
-        hoursWorked: 0,
+        projectLines: [],
         absenceCode: "PH",
         notes: "Public holiday"
       });
@@ -151,8 +172,7 @@ function buildMonthEntries(monthKey: string, settings: RuleSettings, todayIso: s
       entries.push({
         date,
         dayType,
-        projectDescription: "",
-        hoursWorked: 0,
+        projectLines: [createProjectLine(0, "")],
         absenceCode: "",
         notes: ""
       });
@@ -162,8 +182,7 @@ function buildMonthEntries(monthKey: string, settings: RuleSettings, todayIso: s
     entries.push({
       date,
       dayType,
-      projectDescription: "General Project Work",
-      hoursWorked: dayType === "FRIDAY_SHORT_DAY" ? 6 : 8,
+      projectLines: [createProjectLine(dayType === "FRIDAY_SHORT_DAY" ? 6 : 8, "General Project Work")],
       absenceCode: "",
       notes: ""
     });
@@ -180,6 +199,95 @@ function buildMonthState(monthKey: string, settings: RuleSettings, todayIso: str
     approvals: [],
     exportBatches: [],
     managerNote: ""
+  };
+}
+
+function normalizeProjectLines(rawProjectLines: unknown): ProjectLine[] {
+  if (Array.isArray(rawProjectLines)) {
+    return rawProjectLines
+      .map((raw) => raw as { id?: unknown; projectDescription?: unknown; hours?: unknown })
+      .map((line) => ({
+        id: typeof line.id === "string" && line.id.length > 0 ? line.id : createProjectLine().id,
+        projectDescription: typeof line.projectDescription === "string" ? line.projectDescription : "",
+        hours: Number.isFinite(Number(line.hours)) ? Number(line.hours) : 0
+      }));
+  }
+
+  return [];
+}
+
+function normalizeMonthState(
+  monthKey: string,
+  rawState: unknown,
+  settings: RuleSettings,
+  todayIso: string
+): MonthTimesheetState {
+  const fallback = buildMonthState(monthKey, settings, todayIso);
+  const raw = rawState as {
+    status?: unknown;
+    revisionNo?: unknown;
+    dayEntries?: unknown;
+    approvals?: unknown;
+    exportBatches?: unknown;
+    managerNote?: unknown;
+  };
+
+  if (!raw || typeof raw !== "object") {
+    return fallback;
+  }
+
+  const baseEntries = Array.isArray(raw.dayEntries) ? raw.dayEntries : fallback.dayEntries;
+  const normalizedEntries: DayEntry[] = baseEntries.map((entryRaw) => {
+    const entry = entryRaw as {
+      date?: unknown;
+      dayType?: unknown;
+      projectLines?: unknown;
+      projectDescription?: unknown;
+      hoursWorked?: unknown;
+      absenceCode?: unknown;
+      notes?: unknown;
+    };
+
+    const date = typeof entry.date === "string" ? entry.date : fallback.dayEntries[0]?.date ?? `${monthKey}-01`;
+    const dayType = resolveDayType(date, settings);
+
+    // Backward compatibility with older single-project schema.
+    const legacyProjectLines =
+      typeof entry.projectDescription === "string" || Number.isFinite(Number(entry.hoursWorked))
+        ? [createProjectLine(Number(entry.hoursWorked) || 0, typeof entry.projectDescription === "string" ? entry.projectDescription : "")]
+        : [];
+
+    const normalizedLines = normalizeProjectLines(entry.projectLines);
+
+    return {
+      date,
+      dayType,
+      projectLines: normalizedLines.length > 0 ? normalizedLines : legacyProjectLines,
+      absenceCode: typeof entry.absenceCode === "string" ? entry.absenceCode : "",
+      notes: typeof entry.notes === "string" ? entry.notes : ""
+    };
+  });
+
+  const dayEntries = normalizedEntries.filter((entry) => {
+    const weekday = new Date(`${entry.date}T00:00:00`).getDay();
+    return weekday !== 0 && weekday !== 6;
+  });
+
+  return {
+    status:
+      raw.status === "DRAFT" ||
+      raw.status === "SUBMITTED" ||
+      raw.status === "MANAGER_APPROVED" ||
+      raw.status === "MANAGER_REJECTED" ||
+      raw.status === "PAYROLL_VALIDATED" ||
+      raw.status === "LOCKED"
+        ? raw.status
+        : fallback.status,
+    revisionNo: Number.isFinite(Number(raw.revisionNo)) ? Number(raw.revisionNo) : fallback.revisionNo,
+    dayEntries: dayEntries.length > 0 ? dayEntries : fallback.dayEntries,
+    approvals: Array.isArray(raw.approvals) ? (raw.approvals as ApprovalEvent[]) : fallback.approvals,
+    exportBatches: Array.isArray(raw.exportBatches) ? (raw.exportBatches as ExportBatch[]) : fallback.exportBatches,
+    managerNote: typeof raw.managerNote === "string" ? raw.managerNote : fallback.managerNote
   };
 }
 
@@ -201,6 +309,11 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   const [ruleSettings, setRuleSettings] = useState<RuleSettings>(INITIAL_RULES);
   const [currentDateIso] = useState<string>(getTodayIso());
   const [selectedMonth, setSelectedMonthState] = useState<string>(currentMonthKey());
+  const [sqliteSync, setSqliteSync] = useState<SqliteSyncState>({
+    state: "idle",
+    message: "",
+    lastSavedAt: null
+  });
 
   const [months, setMonths] = useState<Record<string, MonthTimesheetState>>(() => {
     const month = currentMonthKey();
@@ -209,14 +322,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     };
   });
 
-  const [plannedLeave, setPlannedLeave] = useState<PlannedLeaveRecord[]>([
-    {
-      id: "PL-2026-03-04",
-      date: "2026-03-04",
-      hours: 8,
-      note: "Planned annual leave"
-    }
-  ]);
+  const [plannedLeave, setPlannedLeave] = useState<PlannedLeaveRecord[]>([]);
+  const [hydratedFromSqlite, setHydratedFromSqlite] = useState(false);
 
   const currentMonthData = months[selectedMonth] ?? buildMonthState(selectedMonth, ruleSettings, currentDateIso);
 
@@ -278,11 +385,11 @@ export function AppStateProvider({ children }: PropsWithChildren) {
             typeof patch.absenceCode === "string" &&
             patch.absenceCode.length > 0
           ) {
-            next.hoursWorked = 0;
+            next.projectLines = [];
           }
 
-          if (Object.prototype.hasOwnProperty.call(patch, "hoursWorked") && (patch.hoursWorked ?? 0) > 0) {
-            next.absenceCode = "";
+          if (next.absenceCode.length === 0 && next.projectLines.length === 0) {
+            next.projectLines = [createProjectLine(0, "")];
           }
 
           next.dayType = resolveDayType(next.date, ruleSettings);
@@ -291,6 +398,89 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       }));
     },
     [currentMonthData.status, ruleSettings, updateCurrentMonth]
+  );
+
+  const addProjectLine = useCallback(
+    (date: string) => {
+      if (!(currentMonthData.status === "DRAFT" || currentMonthData.status === "MANAGER_REJECTED")) {
+        return;
+      }
+
+      updateCurrentMonth((monthState) => ({
+        ...monthState,
+        dayEntries: monthState.dayEntries.map((entry) => {
+          if (entry.date !== date) {
+            return entry;
+          }
+
+          return {
+            ...entry,
+            absenceCode: "",
+            projectLines: [...entry.projectLines, createProjectLine(0, "")]
+          };
+        })
+      }));
+    },
+    [currentMonthData.status, updateCurrentMonth]
+  );
+
+  const updateProjectLine = useCallback(
+    (date: string, lineId: string, patch: Partial<ProjectLine>) => {
+      if (!(currentMonthData.status === "DRAFT" || currentMonthData.status === "MANAGER_REJECTED")) {
+        return;
+      }
+
+      updateCurrentMonth((monthState) => ({
+        ...monthState,
+        dayEntries: monthState.dayEntries.map((entry) => {
+          if (entry.date !== date) {
+            return entry;
+          }
+
+          const projectLines = entry.projectLines.map((line) => (line.id === lineId ? { ...line, ...patch } : line));
+          const workedHours = projectLines.reduce((sum, line) => sum + line.hours, 0);
+
+          return {
+            ...entry,
+            absenceCode: workedHours > 0 ? "" : entry.absenceCode,
+            projectLines
+          };
+        })
+      }));
+    },
+    [currentMonthData.status, updateCurrentMonth]
+  );
+
+  const removeProjectLine = useCallback(
+    (date: string, lineId: string) => {
+      if (!(currentMonthData.status === "DRAFT" || currentMonthData.status === "MANAGER_REJECTED")) {
+        return;
+      }
+
+      updateCurrentMonth((monthState) => ({
+        ...monthState,
+        dayEntries: monthState.dayEntries.map((entry) => {
+          if (entry.date !== date) {
+            return entry;
+          }
+
+          const remaining = entry.projectLines.filter((line) => line.id !== lineId);
+
+          if (remaining.length > 0 || entry.absenceCode.length > 0) {
+            return {
+              ...entry,
+              projectLines: remaining
+            };
+          }
+
+          return {
+            ...entry,
+            projectLines: [createProjectLine(0, "")]
+          };
+        })
+      }));
+    },
+    [currentMonthData.status, updateCurrentMonth]
   );
 
   const submitTimesheet = useCallback(() => {
@@ -429,8 +619,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       totals: computed.periodTotals,
       entries: currentMonthData.dayEntries.map((entry) => ({
         date: entry.date,
-        projectDescription: entry.projectDescription,
-        hoursWorked: entry.hoursWorked,
+        projectLines: entry.projectLines,
         absenceCode: entry.absenceCode
       }))
     });
@@ -443,7 +632,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         {
           batchId,
           createdAt: nowIso(),
-          lineCount: monthState.dayEntries.filter((entry) => entry.hoursWorked > 0 || entry.absenceCode.length > 0).length,
+          lineCount: monthState.dayEntries.filter((entry) => sumProjectHours(entry) > 0 || entry.absenceCode.length > 0).length,
           checksum
         },
         ...monthState.exportBatches
@@ -516,6 +705,108 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     setPlannedLeave((prior) => prior.filter((item) => item.id !== id));
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSqliteState() {
+      setSqliteSync({ state: "loading", message: "Loading SQLite state...", lastSavedAt: null });
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/v1/sqlite/state`);
+
+        if (!response.ok) {
+          throw new Error(`Load failed with status ${response.status}`);
+        }
+
+        const payload = (await response.json()) as {
+          data?: { months?: Record<string, MonthTimesheetState>; plannedLeave?: PlannedLeaveRecord[] };
+        };
+
+        if (cancelled) {
+          return;
+        }
+
+        const loadedMonths = payload.data?.months;
+        const loadedPlannedLeave = payload.data?.plannedLeave;
+
+        if (loadedMonths && Object.keys(loadedMonths).length > 0) {
+          setMonths((prior) => {
+            const normalized: Record<string, MonthTimesheetState> = {};
+
+            for (const [monthKey, monthState] of Object.entries(loadedMonths)) {
+              normalized[monthKey] = normalizeMonthState(monthKey, monthState, ruleSettings, currentDateIso);
+            }
+
+            return { ...prior, ...normalized };
+          });
+        }
+
+        if (Array.isArray(loadedPlannedLeave)) {
+          setPlannedLeave(loadedPlannedLeave);
+        }
+
+        setSqliteSync({ state: "ready", message: "SQLite loaded", lastSavedAt: null });
+      } catch (error) {
+        if (!cancelled) {
+          setSqliteSync({
+            state: "error",
+            message: `SQLite load failed: ${error instanceof Error ? error.message : "unknown error"}`,
+            lastSavedAt: null
+          });
+        }
+      } finally {
+        if (!cancelled) {
+          setHydratedFromSqlite(true);
+        }
+      }
+    }
+
+    void loadSqliteState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hydratedFromSqlite) {
+      return;
+    }
+
+    const timeout = window.setTimeout(async () => {
+      try {
+        setSqliteSync((prior) => ({ ...prior, state: "saving", message: "Saving to SQLite..." }));
+
+        const response = await fetch(`${API_BASE_URL}/v1/sqlite/state`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            months,
+            plannedLeave
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`Save failed with status ${response.status}`);
+        }
+
+        setSqliteSync({ state: "ready", message: "Saved to SQLite", lastSavedAt: nowIso() });
+      } catch (error) {
+        setSqliteSync((prior) => ({
+          ...prior,
+          state: "error",
+          message: `SQLite save failed: ${error instanceof Error ? error.message : "unknown error"}`
+        }));
+      }
+    }, 700);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [hydratedFromSqlite, months, plannedLeave]);
+
   const selectedYear = Number(selectedMonth.slice(0, 4));
 
   const leaveSummary = useMemo(() => {
@@ -558,7 +849,11 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     managerNote: currentMonthData.managerNote,
     setManagerNote,
     computed,
+    sqliteSync,
     updateDayEntry,
+    addProjectLine,
+    updateProjectLine,
+    removeProjectLine,
     submitTimesheet,
     managerApprove,
     managerReject,
