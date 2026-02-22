@@ -8,26 +8,48 @@ import { useAppState } from "../state/AppStateContext";
 
 export function EmployeeDashboardPage() {
   const navigate = useNavigate();
-  const { status, periodLabel, revisionNo, computed } = useAppState();
+  const {
+    status,
+    periodLabel,
+    periodDisplayLabel,
+    revisionNo,
+    computed,
+    selectedMonth,
+    setSelectedMonth,
+    currentDateIso,
+    leaveSummary
+  } = useAppState();
 
   return (
     <Panel
       title="Employee Dashboard"
-      subtitle="Current period overview and quick actions"
+      subtitle="Month-by-month timesheet summary and quick actions"
       actions={<StatusChip label={status.replaceAll("_", " ")} tone={statusTone(status)} />}
     >
+      <div className="form-grid">
+        <label className="field inline-field">
+          Select month
+          <input type="month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} />
+        </label>
+      </div>
+
       <div className="metrics-grid">
-        <MetricCard label="Period" value={periodLabel} />
+        <MetricCard label="Current Date" value={currentDateIso} />
+        <MetricCard label="Selected Month" value={periodDisplayLabel} />
+        <MetricCard label="Period Key" value={periodLabel} />
         <MetricCard label="Revision" value={String(revisionNo)} />
         <MetricCard label="Normal Hours" value={minutesToHoursString(computed.periodTotals.normalMinutes)} />
         <MetricCard label="Overtime" value={minutesToHoursString(computed.periodTotals.overtimeMinutes)} />
-        <MetricCard label="PH Worked" value={minutesToHoursString(computed.periodTotals.phWorkedMinutes)} />
         <MetricCard label="Leave" value={minutesToHoursString(computed.periodTotals.leaveMinutes)} />
+        <MetricCard label="Annual Leave Remaining" value={leaveSummary.remainingAfterPlanned.toFixed(2)} />
       </div>
 
       <div className="inline-actions">
         <button type="button" className="btn btn-primary" onClick={() => navigate("/timesheet")}>
-          Open Timesheet Grid
+          Open Monthly Timesheet
+        </button>
+        <button type="button" className="btn" onClick={() => navigate("/leave/planner")}>
+          Open Leave Planner
         </button>
         <button type="button" className="btn" onClick={() => navigate("/history")}>
           View History

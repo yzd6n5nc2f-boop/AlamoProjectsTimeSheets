@@ -8,6 +8,8 @@ import {
 } from "react";
 import {
   calculateTimesheet,
+  getTodayIso,
+  monthLabel,
   resolveDayType,
   type DayEntry,
   type RuleSettings,
@@ -30,11 +32,31 @@ export interface ExportBatch {
   checksum: string;
 }
 
+export interface PlannedLeaveRecord {
+  id: string;
+  date: string;
+  hours: number;
+  note: string;
+}
+
+interface MonthTimesheetState {
+  status: WorkflowStatus;
+  revisionNo: number;
+  dayEntries: DayEntry[];
+  approvals: ApprovalEvent[];
+  exportBatches: ExportBatch[];
+  managerNote: string;
+}
+
 interface AppStateValue {
   role: AppRole;
   setRole: (role: AppRole) => void;
-  status: WorkflowStatus;
+  selectedMonth: string;
+  setSelectedMonth: (month: string) => void;
+  currentDateIso: string;
   periodLabel: string;
+  periodDisplayLabel: string;
+  status: WorkflowStatus;
   revisionNo: number;
   ruleSettings: RuleSettings;
   dayEntries: DayEntry[];
@@ -51,22 +73,21 @@ interface AppStateValue {
   lockPeriod: () => { ok: boolean; message: string };
   createExportBatch: () => { ok: boolean; message: string };
   updateRuleSettings: (patch: Partial<RuleSettings>) => void;
+  annualLeaveEntitlementHours: number;
+  plannedLeave: PlannedLeaveRecord[];
+  addPlannedLeave: (payload: Omit<PlannedLeaveRecord, "id">) => { ok: boolean; message: string };
+  removePlannedLeave: (id: string) => void;
+  leaveSummary: {
+    year: number;
+    entitlementHours: number;
+    takenHours: number;
+    plannedHours: number;
+    remainingAfterTaken: number;
+    remainingAfterPlanned: number;
+  };
 }
 
 const AppStateContext = createContext<AppStateValue | null>(null);
-
-const PERIOD_DAYS = [
-  "2026-02-02",
-  "2026-02-03",
-  "2026-02-04",
-  "2026-02-05",
-  "2026-02-06",
-  "2026-02-09",
-  "2026-02-10",
-  "2026-02-11",
-  "2026-02-12",
-  "2026-02-13"
-];
 
 const INITIAL_RULES: RuleSettings = {
   fullDayMinutes: 480,
@@ -74,44 +95,90 @@ const INITIAL_RULES: RuleSettings = {
   fridayShortDayMinutes: 360,
   earlyKnockOffPaidFullDay: true,
   earlyKnockOffDates: ["2026-02-12"],
-  publicHolidays: ["2026-02-10"]
+  publicHolidays: ["2026-01-01", "2026-01-26", "2026-02-10", "2026-04-03"]
 };
 
-function buildInitialEntries(settings: RuleSettings): DayEntry[] {
-  return PERIOD_DAYS.map((date) => {
-    const dayType = resolveDayType(date, settings);
-
-    if (date === "2026-02-10") {
-      return {
-        date,
-        dayType,
-        startLocal: "",
-        endLocal: "",
-        breakMinutes: 0,
-        absenceCode: "PH",
-        notes: "Public holiday"
-      };
-    }
-
-    return {
-      date,
-      dayType,
-      startLocal: "08:00",
-      endLocal: dayType === "FRIDAY_SHORT_DAY" ? "15:00" : "16:30",
-      breakMinutes: 30,
-      absenceCode: "",
-      notes: ""
-    };
-  });
-}
+const ANNUAL_LEAVE_ENTITLEMENT_HOURS = 152;
 
 function nowIso(): string {
   return new Date().toISOString();
 }
 
-function buildBatchId(): string {
+function currentMonthKey(): string {
+  return getTodayIso().slice(0, 7);
+}
+
+function daysInMonth(monthKey: string): number {
+  const [yearText, monthText] = monthKey.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  return new Date(year, month, 0).getDate();
+}
+
+function buildMonthEntries(monthKey: string, settings: RuleSettings, todayIso: string): DayEntry[] {
+  const [yearText, monthText] = monthKey.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const totalDays = daysInMonth(monthKey);
+
+  const entries: DayEntry[] = [];
+
+  for (let day = 1; day <= totalDays; day += 1) {
+    const date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const dayType = resolveDayType(date, settings);
+    const isPastOrCurrent = date <= todayIso;
+
+    if (dayType === "PUBLIC_HOLIDAY") {
+      entries.push({
+        date,
+        dayType,
+        projectDescription: "",
+        hoursWorked: 0,
+        absenceCode: "PH",
+        notes: "Public holiday"
+      });
+      continue;
+    }
+
+    if (!isPastOrCurrent || dayType === "WEEKEND") {
+      entries.push({
+        date,
+        dayType,
+        projectDescription: "",
+        hoursWorked: 0,
+        absenceCode: "",
+        notes: ""
+      });
+      continue;
+    }
+
+    entries.push({
+      date,
+      dayType,
+      projectDescription: "General Project Work",
+      hoursWorked: dayType === "FRIDAY_SHORT_DAY" ? 6 : 8,
+      absenceCode: "",
+      notes: ""
+    });
+  }
+
+  return entries;
+}
+
+function buildMonthState(monthKey: string, settings: RuleSettings, todayIso: string): MonthTimesheetState {
+  return {
+    status: "DRAFT",
+    revisionNo: 1,
+    dayEntries: buildMonthEntries(monthKey, settings, todayIso),
+    approvals: [],
+    exportBatches: [],
+    managerNote: ""
+  };
+}
+
+function buildBatchId(monthKey: string): string {
   const timestamp = Date.now();
-  return `TSB-${timestamp}`;
+  return `TSB-${monthKey.replace("-", "")}-${timestamp}`;
 }
 
 function hashForBatch(input: string): string {
@@ -124,215 +191,364 @@ function hashForBatch(input: string): string {
 
 export function AppStateProvider({ children }: PropsWithChildren) {
   const [role, setRole] = useState<AppRole>("EMPLOYEE");
-  const [status, setStatus] = useState<WorkflowStatus>("DRAFT");
-  const [revisionNo, setRevisionNo] = useState(1);
   const [ruleSettings, setRuleSettings] = useState<RuleSettings>(INITIAL_RULES);
-  const [dayEntries, setDayEntries] = useState<DayEntry[]>(() => buildInitialEntries(INITIAL_RULES));
-  const [managerNote, setManagerNote] = useState("");
-  const [approvals, setApprovals] = useState<ApprovalEvent[]>([]);
-  const [exportBatches, setExportBatches] = useState<ExportBatch[]>([]);
+  const [currentDateIso] = useState<string>(getTodayIso());
+  const [selectedMonth, setSelectedMonthState] = useState<string>(currentMonthKey());
 
-  const computed = useMemo(() => calculateTimesheet(dayEntries, ruleSettings), [dayEntries, ruleSettings]);
+  const [months, setMonths] = useState<Record<string, MonthTimesheetState>>(() => {
+    const month = currentMonthKey();
+    return {
+      [month]: buildMonthState(month, INITIAL_RULES, getTodayIso())
+    };
+  });
 
-  const updateDayEntry = useCallback(
-    (date: string, patch: Partial<DayEntry>) => {
-      if (!(status === "DRAFT" || status === "MANAGER_REJECTED")) {
+  const [plannedLeave, setPlannedLeave] = useState<PlannedLeaveRecord[]>([
+    {
+      id: "PL-2026-03-04",
+      date: "2026-03-04",
+      hours: 8,
+      note: "Planned annual leave"
+    }
+  ]);
+
+  const currentMonthData = months[selectedMonth] ?? buildMonthState(selectedMonth, ruleSettings, currentDateIso);
+
+  const computed = useMemo(
+    () => calculateTimesheet(currentMonthData.dayEntries, ruleSettings, currentDateIso),
+    [currentMonthData.dayEntries, currentDateIso, ruleSettings]
+  );
+
+  const updateCurrentMonth = useCallback(
+    (updater: (month: MonthTimesheetState) => MonthTimesheetState) => {
+      setMonths((prior) => {
+        const month = prior[selectedMonth] ?? buildMonthState(selectedMonth, ruleSettings, currentDateIso);
+        return {
+          ...prior,
+          [selectedMonth]: updater(month)
+        };
+      });
+    },
+    [currentDateIso, ruleSettings, selectedMonth]
+  );
+
+  const setSelectedMonth = useCallback(
+    (month: string) => {
+      if (!/^\d{4}-\d{2}$/.test(month)) {
         return;
       }
 
-      setDayEntries((prior) =>
-        prior.map((entry) => {
+      setMonths((prior) => {
+        if (prior[month]) {
+          return prior;
+        }
+        return {
+          ...prior,
+          [month]: buildMonthState(month, ruleSettings, currentDateIso)
+        };
+      });
+      setSelectedMonthState(month);
+    },
+    [currentDateIso, ruleSettings]
+  );
+
+  const updateDayEntry = useCallback(
+    (date: string, patch: Partial<DayEntry>) => {
+      if (!(currentMonthData.status === "DRAFT" || currentMonthData.status === "MANAGER_REJECTED")) {
+        return;
+      }
+
+      updateCurrentMonth((monthState) => ({
+        ...monthState,
+        dayEntries: monthState.dayEntries.map((entry) => {
           if (entry.date !== date) {
             return entry;
           }
 
           const next = { ...entry, ...patch };
-          if (Object.prototype.hasOwnProperty.call(patch, "absenceCode") && patch.absenceCode && patch.absenceCode.length > 0) {
-            next.startLocal = "";
-            next.endLocal = "";
+
+          if (
+            Object.prototype.hasOwnProperty.call(patch, "absenceCode") &&
+            typeof patch.absenceCode === "string" &&
+            patch.absenceCode.length > 0
+          ) {
+            next.hoursWorked = 0;
           }
 
-          if (Object.prototype.hasOwnProperty.call(patch, "startLocal") || Object.prototype.hasOwnProperty.call(patch, "endLocal")) {
-            if (patch.startLocal || patch.endLocal) {
-              next.absenceCode = "";
-            }
+          if (Object.prototype.hasOwnProperty.call(patch, "hoursWorked") && (patch.hoursWorked ?? 0) > 0) {
+            next.absenceCode = "";
           }
 
           next.dayType = resolveDayType(next.date, ruleSettings);
           return next;
         })
-      );
+      }));
     },
-    [ruleSettings, status]
+    [currentMonthData.status, ruleSettings, updateCurrentMonth]
   );
 
   const submitTimesheet = useCallback(() => {
-    if (!(status === "DRAFT" || status === "MANAGER_REJECTED")) {
+    if (!(currentMonthData.status === "DRAFT" || currentMonthData.status === "MANAGER_REJECTED")) {
       return { ok: false, message: "Only Draft or Rejected timesheets can be submitted." };
     }
+
     if (computed.hasBlockingErrors) {
       return { ok: false, message: "Fix validation errors before submit." };
     }
 
-    setStatus("SUBMITTED");
-    setApprovals((prior) => [
-      ...prior,
-      {
-        at: nowIso(),
-        actor: "Employee",
-        action: "SUBMIT",
-        note: "Timesheet submitted"
-      }
-    ]);
+    updateCurrentMonth((monthState) => ({
+      ...monthState,
+      status: "SUBMITTED",
+      approvals: [
+        ...monthState.approvals,
+        {
+          at: nowIso(),
+          actor: "Employee",
+          action: "SUBMIT",
+          note: `Monthly timesheet submitted for ${selectedMonth}`
+        }
+      ]
+    }));
 
     return { ok: true, message: "Timesheet submitted." };
-  }, [computed.hasBlockingErrors, status]);
+  }, [computed.hasBlockingErrors, currentMonthData.status, selectedMonth, updateCurrentMonth]);
 
   const managerApprove = useCallback(() => {
-    if (status !== "SUBMITTED") {
+    if (currentMonthData.status !== "SUBMITTED") {
       return { ok: false, message: "Manager can approve only submitted timesheets." };
     }
-    if (computed.requiresManagerApproval && managerNote.trim().length === 0) {
+
+    if (computed.requiresManagerApproval && currentMonthData.managerNote.trim().length === 0) {
       return { ok: false, message: "Add manager confirmation note for OT/PH approval." };
     }
 
-    setStatus("MANAGER_APPROVED");
-    setApprovals((prior) => [
-      ...prior,
-      {
-        at: nowIso(),
-        actor: "Manager",
-        action: "MANAGER_APPROVE",
-        note: managerNote || "Approved"
-      }
-    ]);
+    updateCurrentMonth((monthState) => ({
+      ...monthState,
+      status: "MANAGER_APPROVED",
+      approvals: [
+        ...monthState.approvals,
+        {
+          at: nowIso(),
+          actor: "Manager",
+          action: "MANAGER_APPROVE",
+          note: monthState.managerNote || "Approved"
+        }
+      ]
+    }));
 
     return { ok: true, message: "Manager approved." };
-  }, [computed.requiresManagerApproval, managerNote, status]);
+  }, [computed.requiresManagerApproval, currentMonthData.managerNote, currentMonthData.status, updateCurrentMonth]);
 
   const managerReject = useCallback(() => {
-    if (status !== "SUBMITTED") {
+    if (currentMonthData.status !== "SUBMITTED") {
       return { ok: false, message: "Manager can reject only submitted timesheets." };
     }
-    if (managerNote.trim().length < 5) {
+
+    if (currentMonthData.managerNote.trim().length < 5) {
       return { ok: false, message: "Rejection note is required." };
     }
 
-    setStatus("MANAGER_REJECTED");
-    setRevisionNo((current) => current + 1);
-    setApprovals((prior) => [
-      ...prior,
-      {
-        at: nowIso(),
-        actor: "Manager",
-        action: "MANAGER_REJECT",
-        note: managerNote
-      }
-    ]);
+    updateCurrentMonth((monthState) => ({
+      ...monthState,
+      status: "MANAGER_REJECTED",
+      revisionNo: monthState.revisionNo + 1,
+      approvals: [
+        ...monthState.approvals,
+        {
+          at: nowIso(),
+          actor: "Manager",
+          action: "MANAGER_REJECT",
+          note: monthState.managerNote
+        }
+      ]
+    }));
 
     return { ok: true, message: "Manager rejected. Employee can edit and resubmit." };
-  }, [managerNote, status]);
+  }, [currentMonthData.managerNote, currentMonthData.status, updateCurrentMonth]);
 
   const payrollValidate = useCallback(() => {
-    if (status !== "MANAGER_APPROVED") {
+    if (currentMonthData.status !== "MANAGER_APPROVED") {
       return { ok: false, message: "Payroll validation requires manager approval first." };
     }
 
-    setStatus("PAYROLL_VALIDATED");
-    setApprovals((prior) => [
-      ...prior,
-      {
-        at: nowIso(),
-        actor: "Payroll",
-        action: "PAYROLL_VALIDATE",
-        note: "All blocking exceptions resolved"
-      }
-    ]);
+    updateCurrentMonth((monthState) => ({
+      ...monthState,
+      status: "PAYROLL_VALIDATED",
+      approvals: [
+        ...monthState.approvals,
+        {
+          at: nowIso(),
+          actor: "Payroll",
+          action: "PAYROLL_VALIDATE",
+          note: "All blocking exceptions resolved"
+        }
+      ]
+    }));
 
     return { ok: true, message: "Payroll validated." };
-  }, [status]);
+  }, [currentMonthData.status, updateCurrentMonth]);
 
   const lockPeriod = useCallback(() => {
-    if (status !== "PAYROLL_VALIDATED") {
+    if (currentMonthData.status !== "PAYROLL_VALIDATED") {
       return { ok: false, message: "Only payroll-validated timesheets can be locked." };
     }
 
-    setStatus("LOCKED");
-    setApprovals((prior) => [
-      ...prior,
-      {
-        at: nowIso(),
-        actor: "Payroll",
-        action: "LOCK",
-        note: "Period locked"
-      }
-    ]);
+    updateCurrentMonth((monthState) => ({
+      ...monthState,
+      status: "LOCKED",
+      approvals: [
+        ...monthState.approvals,
+        {
+          at: nowIso(),
+          actor: "Payroll",
+          action: "LOCK",
+          note: "Month locked"
+        }
+      ]
+    }));
 
-    return { ok: true, message: "Period locked." };
-  }, [status]);
+    return { ok: true, message: "Month locked." };
+  }, [currentMonthData.status, updateCurrentMonth]);
 
   const createExportBatch = useCallback(() => {
-    if (!(status === "PAYROLL_VALIDATED" || status === "LOCKED")) {
+    if (!(currentMonthData.status === "PAYROLL_VALIDATED" || currentMonthData.status === "LOCKED")) {
       return { ok: false, message: "Export requires payroll validated or locked status." };
     }
 
-    const batchId = buildBatchId();
+    const batchId = buildBatchId(selectedMonth);
     const signature = JSON.stringify({
-      revisionNo,
-      status,
+      month: selectedMonth,
+      revisionNo: currentMonthData.revisionNo,
+      status: currentMonthData.status,
       totals: computed.periodTotals,
-      entries: dayEntries.map((entry) => ({
+      entries: currentMonthData.dayEntries.map((entry) => ({
         date: entry.date,
-        startLocal: entry.startLocal,
-        endLocal: entry.endLocal,
+        projectDescription: entry.projectDescription,
+        hoursWorked: entry.hoursWorked,
         absenceCode: entry.absenceCode
       }))
     });
 
     const checksum = hashForBatch(signature);
 
-    setExportBatches((prior) => [
+    updateCurrentMonth((monthState) => ({
+      ...monthState,
+      exportBatches: [
+        {
+          batchId,
+          createdAt: nowIso(),
+          lineCount: monthState.dayEntries.filter((entry) => entry.hoursWorked > 0 || entry.absenceCode.length > 0).length,
+          checksum
+        },
+        ...monthState.exportBatches
+      ],
+      approvals: [
+        ...monthState.approvals,
+        {
+          at: nowIso(),
+          actor: "Payroll",
+          action: "EXPORT_BATCH",
+          note: `Batch ${batchId}`
+        }
+      ]
+    }));
+
+    return { ok: true, message: `Export batch ${batchId} created.` };
+  }, [computed.periodTotals, currentMonthData.dayEntries, currentMonthData.revisionNo, currentMonthData.status, selectedMonth, updateCurrentMonth]);
+
+  const updateRuleSettings = useCallback(
+    (patch: Partial<RuleSettings>) => {
+      setRuleSettings((prior) => {
+        const next = { ...prior, ...patch };
+
+        setMonths((existingMonths) => {
+          const updated: Record<string, MonthTimesheetState> = {};
+
+          for (const [monthKey, monthState] of Object.entries(existingMonths)) {
+            updated[monthKey] = {
+              ...monthState,
+              dayEntries: monthState.dayEntries.map((entry) => ({
+                ...entry,
+                dayType: resolveDayType(entry.date, next)
+              }))
+            };
+          }
+
+          return updated;
+        });
+
+        return next;
+      });
+    },
+    []
+  );
+
+  const setManagerNote = useCallback(
+    (value: string) => {
+      updateCurrentMonth((monthState) => ({ ...monthState, managerNote: value }));
+    },
+    [updateCurrentMonth]
+  );
+
+  const addPlannedLeave = useCallback((payload: Omit<PlannedLeaveRecord, "id">) => {
+    if (!payload.date || payload.hours <= 0) {
+      return { ok: false, message: "Date and hours are required." };
+    }
+
+    setPlannedLeave((prior) => [
       {
-        batchId,
-        createdAt: nowIso(),
-        lineCount: dayEntries.length,
-        checksum
+        id: `PL-${Date.now()}`,
+        ...payload
       },
       ...prior
     ]);
 
-    setApprovals((prior) => [
-      ...prior,
-      {
-        at: nowIso(),
-        actor: "Payroll",
-        action: "EXPORT_BATCH",
-        note: `Batch ${batchId}`
-      }
-    ]);
-
-    return { ok: true, message: `Export batch ${batchId} created.` };
-  }, [computed.periodTotals, dayEntries, revisionNo, status]);
-
-  const updateRuleSettings = useCallback((patch: Partial<RuleSettings>) => {
-    setRuleSettings((prior) => {
-      const next = { ...prior, ...patch };
-      setDayEntries((entries) => entries.map((entry) => ({ ...entry, dayType: resolveDayType(entry.date, next) })));
-      return next;
-    });
+    return { ok: true, message: "Planned leave recorded." };
   }, []);
+
+  const removePlannedLeave = useCallback((id: string) => {
+    setPlannedLeave((prior) => prior.filter((item) => item.id !== id));
+  }, []);
+
+  const selectedYear = Number(selectedMonth.slice(0, 4));
+
+  const leaveSummary = useMemo(() => {
+    const takenHours = Object.values(months)
+      .flatMap((monthState) => monthState.dayEntries)
+      .filter((entry) => entry.date.startsWith(`${selectedYear}-`) && entry.absenceCode === "AL")
+      .reduce((sum) => sum + ruleSettings.leavePaidMinutesDefault / 60, 0);
+
+    const plannedHours = plannedLeave
+      .filter((record) => record.date.startsWith(`${selectedYear}-`))
+      .reduce((sum, record) => sum + record.hours, 0);
+
+    const remainingAfterTaken = ANNUAL_LEAVE_ENTITLEMENT_HOURS - takenHours;
+    const remainingAfterPlanned = remainingAfterTaken - plannedHours;
+
+    return {
+      year: selectedYear,
+      entitlementHours: ANNUAL_LEAVE_ENTITLEMENT_HOURS,
+      takenHours,
+      plannedHours,
+      remainingAfterTaken,
+      remainingAfterPlanned
+    };
+  }, [months, plannedLeave, ruleSettings.leavePaidMinutesDefault, selectedYear]);
 
   const value: AppStateValue = {
     role,
     setRole,
-    status,
-    periodLabel: "2026-P02",
-    revisionNo,
+    selectedMonth,
+    setSelectedMonth,
+    currentDateIso,
+    periodLabel: selectedMonth,
+    periodDisplayLabel: monthLabel(selectedMonth),
+    status: currentMonthData.status,
+    revisionNo: currentMonthData.revisionNo,
     ruleSettings,
-    dayEntries,
-    approvals,
-    exportBatches,
-    managerNote,
+    dayEntries: currentMonthData.dayEntries,
+    approvals: currentMonthData.approvals,
+    exportBatches: currentMonthData.exportBatches,
+    managerNote: currentMonthData.managerNote,
     setManagerNote,
     computed,
     updateDayEntry,
@@ -342,7 +558,12 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     payrollValidate,
     lockPeriod,
     createExportBatch,
-    updateRuleSettings
+    updateRuleSettings,
+    annualLeaveEntitlementHours: ANNUAL_LEAVE_ENTITLEMENT_HOURS,
+    plannedLeave,
+    addPlannedLeave,
+    removePlannedLeave,
+    leaveSummary
   };
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;

@@ -4,6 +4,7 @@ import { AdminRulesPage } from "./pages/AdminRulesPage";
 import { EmployeeDashboardPage } from "./pages/EmployeeDashboardPage";
 import { HistoryPage } from "./pages/HistoryPage";
 import { LeaveAdminPage } from "./pages/LeaveAdminPage";
+import { LeavePlannerPage } from "./pages/LeavePlannerPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ManagerQueuePage } from "./pages/ManagerQueuePage";
 import { ManagerReviewPage } from "./pages/ManagerReviewPage";
@@ -18,6 +19,7 @@ export function App() {
         <Route path="/" element={<LoginPage />} />
         <Route path="/employee" element={<EmployeeDashboardPage />} />
         <Route path="/timesheet" element={<TimesheetEntryPage />} />
+        <Route path="/leave/planner" element={<LeavePlannerPage />} />
         <Route path="/history" element={<HistoryPage />} />
         <Route path="/manager/queue" element={<ManagerQueuePage />} />
         <Route path="/manager/review" element={<ManagerReviewPage />} />

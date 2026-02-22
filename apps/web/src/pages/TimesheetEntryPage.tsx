@@ -9,14 +9,12 @@ const ABSENCE_OPTIONS = ["", "AL", "SL", "LWOP", "PH"];
 
 const ERROR_MESSAGES: Record<string, string> = {
   MISSING_ENTRY_DAY: "Missing required day entry",
-  TIME_PAIR_REQUIRED: "Start and finish must both be set",
-  FINISH_BEFORE_START: "Finish must be after start",
   NEGATIVE_TOTALS: "Totals cannot be negative",
   IMPOSSIBLE_HOURS: "Worked hours exceed policy limits",
   PH_CODE_REQUIRED: "Public holiday not worked must use PH code",
-  CODE_TIME_CONFLICT: "Absence code cannot be combined with start/finish",
-  INVALID_TIME_FORMAT: "Time format must be HH:mm",
-  INVALID_ABSENCE_CODE: "Absence code is not allowed"
+  CODE_HOURS_CONFLICT: "Absence code cannot be combined with worked hours",
+  INVALID_ABSENCE_CODE: "Absence code is not allowed",
+  PROJECT_REQUIRED: "Project description is required when hours are entered"
 };
 
 function isEditable(status: string): boolean {
@@ -24,7 +22,17 @@ function isEditable(status: string): boolean {
 }
 
 export function TimesheetEntryPage() {
-  const { status, dayEntries, computed, updateDayEntry, submitTimesheet } = useAppState();
+  const {
+    status,
+    dayEntries,
+    computed,
+    updateDayEntry,
+    submitTimesheet,
+    selectedMonth,
+    setSelectedMonth,
+    currentDateIso,
+    periodDisplayLabel
+  } = useAppState();
   const [message, setMessage] = useState<string>("");
 
   const editable = isEditable(status);
@@ -43,11 +51,22 @@ export function TimesheetEntryPage() {
 
   return (
     <Panel
-      title="Timesheet Entry Grid"
-      subtitle="Paper-like daily grid with deterministic validation and totals"
+      title="Monthly Timesheet Entry"
+      subtitle={`Month selected: ${periodDisplayLabel}`}
       actions={<StatusChip label={status.replaceAll("_", " ")} tone={statusTone(status)} />}
     >
       {message ? <p className="alert">{message}</p> : null}
+
+      <div className="form-grid">
+        <label className="field inline-field">
+          Select month
+          <input type="month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} />
+        </label>
+        <label className="field inline-field">
+          Current date
+          <input value={currentDateIso} readOnly />
+        </label>
+      </div>
 
       <div className="table-wrap">
         <table className="table-grid">
@@ -55,9 +74,8 @@ export function TimesheetEntryPage() {
             <tr>
               <th>Date</th>
               <th>Day Type</th>
-              <th>Start</th>
-              <th>Finish</th>
-              <th>Break</th>
+              <th>Project Description</th>
+              <th>Hours</th>
               <th>Absence</th>
               <th>Normal</th>
               <th>OT</th>
@@ -75,34 +93,31 @@ export function TimesheetEntryPage() {
                   {entries.map((entry) => {
                     const calc = computed.byDate[entry.date];
                     const errors = calc?.blockingErrors ?? [];
+                    const isToday = entry.date === currentDateIso;
 
                     return (
-                      <tr key={entry.date} className={errors.length > 0 ? "row-error" : ""}>
+                      <tr
+                        key={entry.date}
+                        className={`${errors.length > 0 ? "row-error" : ""} ${isToday ? "row-current" : ""}`.trim()}
+                      >
                         <td>{formatDate(entry.date)}</td>
                         <td>{entry.dayType}</td>
                         <td>
                           <input
-                            value={entry.startLocal}
-                            onChange={(event) => updateDayEntry(entry.date, { startLocal: event.target.value })}
-                            placeholder="08:00"
+                            value={entry.projectDescription}
+                            onChange={(event) => updateDayEntry(entry.date, { projectDescription: event.target.value })}
+                            placeholder="Project or task description"
                             disabled={!editable || entry.absenceCode.length > 0}
                           />
                         </td>
                         <td>
                           <input
-                            value={entry.endLocal}
-                            onChange={(event) => updateDayEntry(entry.date, { endLocal: event.target.value })}
-                            placeholder="16:30"
-                            disabled={!editable || entry.absenceCode.length > 0}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            value={entry.breakMinutes}
-                            onChange={(event) => updateDayEntry(entry.date, { breakMinutes: Number(event.target.value) || 0 })}
+                            value={entry.hoursWorked}
+                            onChange={(event) => updateDayEntry(entry.date, { hoursWorked: Number(event.target.value) || 0 })}
                             type="number"
                             min={0}
-                            max={120}
+                            max={24}
+                            step={0.25}
                             disabled={!editable || entry.absenceCode.length > 0}
                           />
                         </td>
@@ -139,7 +154,7 @@ export function TimesheetEntryPage() {
                   })}
 
                   <tr className="row-total">
-                    <td colSpan={6}>Weekly Totals ({weekLabel})</td>
+                    <td colSpan={5}>Weekly Totals ({weekLabel})</td>
                     <td>{minutesToHoursString(weekTotals?.normalMinutes ?? 0)}</td>
                     <td>{minutesToHoursString(weekTotals?.overtimeMinutes ?? 0)}</td>
                     <td>{minutesToHoursString(weekTotals?.phWorkedMinutes ?? 0)}</td>
@@ -152,7 +167,7 @@ export function TimesheetEntryPage() {
           </tbody>
           <tfoot>
             <tr className="row-total period-total">
-              <td colSpan={6}>Period Totals</td>
+              <td colSpan={5}>Month Totals</td>
               <td>{minutesToHoursString(computed.periodTotals.normalMinutes)}</td>
               <td>{minutesToHoursString(computed.periodTotals.overtimeMinutes)}</td>
               <td>{minutesToHoursString(computed.periodTotals.phWorkedMinutes)}</td>
@@ -173,7 +188,7 @@ export function TimesheetEntryPage() {
             setMessage(result.message);
           }}
         >
-          Submit Timesheet
+          Submit Monthly Timesheet
         </button>
       </div>
     </Panel>

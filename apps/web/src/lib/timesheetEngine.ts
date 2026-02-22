@@ -6,7 +6,7 @@ export type WorkflowStatus =
   | "PAYROLL_VALIDATED"
   | "LOCKED";
 
-export type DayType = "WORKDAY" | "FRIDAY_SHORT_DAY" | "EARLY_KNOCK_OFF" | "PUBLIC_HOLIDAY";
+export type DayType = "WORKDAY" | "FRIDAY_SHORT_DAY" | "EARLY_KNOCK_OFF" | "PUBLIC_HOLIDAY" | "WEEKEND";
 
 export interface RuleSettings {
   fullDayMinutes: number;
@@ -20,9 +20,8 @@ export interface RuleSettings {
 export interface DayEntry {
   date: string;
   dayType: DayType;
-  startLocal: string;
-  endLocal: string;
-  breakMinutes: number;
+  projectDescription: string;
+  hoursWorked: number;
   absenceCode: string;
   notes: string;
 }
@@ -55,22 +54,6 @@ export interface TimesheetComputed {
 
 const ABSENCE_CODES = new Set(["AL", "SL", "LWOP", "PH"]);
 
-function toMinutes(value: string): number {
-  if (!/^\d{2}:\d{2}$/.test(value)) {
-    return Number.NaN;
-  }
-  const parts = value.split(":");
-  if (parts.length !== 2) {
-    return Number.NaN;
-  }
-  const hh = Number(parts[0]);
-  const mm = Number(parts[1]);
-  if (!Number.isFinite(hh) || !Number.isFinite(mm)) {
-    return Number.NaN;
-  }
-  return hh * 60 + mm;
-}
-
 function weekLabel(dateValue: string): string {
   const date = new Date(`${dateValue}T00:00:00`);
   const yearStart = new Date(date.getFullYear(), 0, 1);
@@ -99,33 +82,58 @@ function addTotals(a: TimesheetTotals, b: TimesheetTotals): TimesheetTotals {
   };
 }
 
+export function getTodayIso(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 export function resolveDayType(date: string, settings: RuleSettings): DayType {
   if (settings.publicHolidays.includes(date)) {
     return "PUBLIC_HOLIDAY";
   }
+
+  const weekday = new Date(`${date}T00:00:00`).getDay();
+
+  if (weekday === 0 || weekday === 6) {
+    return "WEEKEND";
+  }
+
   if (settings.earlyKnockOffDates.includes(date)) {
     return "EARLY_KNOCK_OFF";
   }
-  const weekday = new Date(`${date}T00:00:00`).getDay();
+
   if (weekday === 5) {
     return "FRIDAY_SHORT_DAY";
   }
+
   return "WORKDAY";
 }
 
-export function calculateDayEntry(entry: DayEntry, settings: RuleSettings): DayCalculation {
+export function calculateDayEntry(entry: DayEntry, settings: RuleSettings, todayIso: string): DayCalculation {
   const blockingErrors: string[] = [];
   const warnings: string[] = [];
 
   const absenceCode = entry.absenceCode.trim();
   const hasAbsence = absenceCode.length > 0;
+  const workedMinutes = Math.round((Number(entry.hoursWorked) || 0) * 60);
 
   if (hasAbsence && !ABSENCE_CODES.has(absenceCode)) {
     blockingErrors.push("INVALID_ABSENCE_CODE");
   }
 
-  if (hasAbsence && (entry.startLocal || entry.endLocal)) {
-    blockingErrors.push("CODE_TIME_CONFLICT");
+  if (hasAbsence && workedMinutes > 0) {
+    blockingErrors.push("CODE_HOURS_CONFLICT");
+  }
+
+  if (workedMinutes < 0) {
+    blockingErrors.push("NEGATIVE_TOTALS");
+  }
+
+  if (workedMinutes > 16 * 60) {
+    blockingErrors.push("IMPOSSIBLE_HOURS");
   }
 
   if (hasAbsence) {
@@ -144,8 +152,18 @@ export function calculateDayEntry(entry: DayEntry, settings: RuleSettings): DayC
     };
   }
 
-  if (!entry.startLocal && !entry.endLocal) {
-    blockingErrors.push("MISSING_ENTRY_DAY");
+  if (workedMinutes === 0) {
+    const isFutureDay = entry.date > todayIso;
+    const isWeekend = entry.dayType === "WEEKEND";
+
+    if (!isFutureDay && !isWeekend) {
+      if (entry.dayType === "PUBLIC_HOLIDAY") {
+        blockingErrors.push("PH_CODE_REQUIRED");
+      } else {
+        blockingErrors.push("MISSING_ENTRY_DAY");
+      }
+    }
+
     return {
       normalMinutes: 0,
       overtimeMinutes: 0,
@@ -156,37 +174,8 @@ export function calculateDayEntry(entry: DayEntry, settings: RuleSettings): DayC
     };
   }
 
-  if (!entry.startLocal || !entry.endLocal) {
-    blockingErrors.push("TIME_PAIR_REQUIRED");
-    return {
-      normalMinutes: 0,
-      overtimeMinutes: 0,
-      phWorkedMinutes: 0,
-      leaveMinutes: 0,
-      blockingErrors,
-      warnings
-    };
-  }
-
-  const startMinutes = toMinutes(entry.startLocal);
-  const finishMinutes = toMinutes(entry.endLocal);
-
-  if (!Number.isFinite(startMinutes) || !Number.isFinite(finishMinutes)) {
-    blockingErrors.push("INVALID_TIME_FORMAT");
-  }
-
-  if (finishMinutes <= startMinutes) {
-    blockingErrors.push("FINISH_BEFORE_START");
-  }
-
-  const workedMinutes = finishMinutes - startMinutes - entry.breakMinutes;
-
-  if (workedMinutes < 0) {
-    blockingErrors.push("NEGATIVE_TOTALS");
-  }
-
-  if (workedMinutes > 16 * 60) {
-    blockingErrors.push("IMPOSSIBLE_HOURS");
+  if (entry.projectDescription.trim().length === 0) {
+    blockingErrors.push("PROJECT_REQUIRED");
   }
 
   if (blockingErrors.length > 0) {
@@ -205,6 +194,17 @@ export function calculateDayEntry(entry: DayEntry, settings: RuleSettings): DayC
       normalMinutes: 0,
       overtimeMinutes: 0,
       phWorkedMinutes: workedMinutes,
+      leaveMinutes: 0,
+      blockingErrors,
+      warnings
+    };
+  }
+
+  if (entry.dayType === "WEEKEND") {
+    return {
+      normalMinutes: 0,
+      overtimeMinutes: workedMinutes,
+      phWorkedMinutes: 0,
       leaveMinutes: 0,
       blockingErrors,
       warnings
@@ -238,7 +238,7 @@ export function calculateDayEntry(entry: DayEntry, settings: RuleSettings): DayC
   };
 }
 
-export function calculateTimesheet(entries: DayEntry[], settings: RuleSettings): TimesheetComputed {
+export function calculateTimesheet(entries: DayEntry[], settings: RuleSettings, todayIso = getTodayIso()): TimesheetComputed {
   const byDate: Record<string, DayCalculation> = {};
   const exceptions: Array<{ code: string; severity: "ERROR" | "WARNING"; message: string; date?: string }> = [];
   const weeklyMap = new Map<string, TimesheetTotals>();
@@ -247,7 +247,7 @@ export function calculateTimesheet(entries: DayEntry[], settings: RuleSettings):
   let requiresManagerApproval = false;
 
   for (const entry of entries) {
-    const result = calculateDayEntry(entry, settings);
+    const result = calculateDayEntry(entry, settings, todayIso);
     byDate[entry.date] = result;
 
     const dayTotals: TimesheetTotals = {
@@ -311,4 +311,12 @@ export function calculateTimesheet(entries: DayEntry[], settings: RuleSettings):
 
 export function minutesToHoursString(minutes: number): string {
   return (minutes / 60).toFixed(2);
+}
+
+export function monthLabel(monthKey: string): string {
+  const [yearPart, monthPart] = monthKey.split("-");
+  const year = Number(yearPart);
+  const month = Number(monthPart);
+  const date = new Date(year, month - 1, 1);
+  return date.toLocaleDateString(undefined, { month: "long", year: "numeric" });
 }

@@ -7,7 +7,7 @@ import { useAppState } from "../state/AppStateContext";
 
 export function ManagerQueuePage() {
   const navigate = useNavigate();
-  const { status, periodLabel, computed } = useAppState();
+  const { status, periodDisplayLabel, computed } = useAppState();
 
   const actionable = status === "SUBMITTED";
 
@@ -29,7 +29,7 @@ export function ManagerQueuePage() {
           <tbody>
             <tr>
               <td>Ana Lee (E1001)</td>
-              <td>{periodLabel}</td>
+              <td>{periodDisplayLabel}</td>
               <td>
                 <StatusChip label={status.replaceAll("_", " ")} tone={statusTone(status)} />
               </td>

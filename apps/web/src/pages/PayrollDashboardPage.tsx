@@ -5,7 +5,7 @@ import { statusTone } from "../lib/ui";
 import { useAppState } from "../state/AppStateContext";
 
 export function PayrollDashboardPage() {
-  const { status, computed, payrollValidate, lockPeriod } = useAppState();
+  const { status, computed, payrollValidate, lockPeriod, periodDisplayLabel } = useAppState();
   const [severity, setSeverity] = useState<"ALL" | "ERROR" | "WARNING">("ALL");
   const [message, setMessage] = useState("");
 
@@ -21,7 +21,7 @@ export function PayrollDashboardPage() {
   return (
     <Panel
       title="Payroll Validation Dashboard"
-      subtitle="Exception-focused validation and export readiness"
+      subtitle={`Exception-focused validation and export readiness for ${periodDisplayLabel}`}
       actions={<StatusChip label={status.replaceAll("_", " ")} tone={statusTone(status)} />}
     >
       {message ? <p className="alert">{message}</p> : null}

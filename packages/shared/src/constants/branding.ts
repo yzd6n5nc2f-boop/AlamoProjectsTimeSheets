@@ -1,5 +1,5 @@
 export const BRANDING = {
-  product: "Timesheet",
+  product: "Workbook",
   subtitle: "for Alamo Projects",
   footer: "Innoweb Ventures Limited"
 } as const;

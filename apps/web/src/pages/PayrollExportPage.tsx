@@ -5,7 +5,7 @@ import { statusTone } from "../lib/ui";
 import { useAppState } from "../state/AppStateContext";
 
 export function PayrollExportPage() {
-  const { status, exportBatches, createExportBatch } = useAppState();
+  const { status, exportBatches, createExportBatch, periodDisplayLabel } = useAppState();
   const [message, setMessage] = useState("");
 
   const canExport = status === "PAYROLL_VALIDATED" || status === "LOCKED";
@@ -13,7 +13,7 @@ export function PayrollExportPage() {
   return (
     <Panel
       title="Payroll Export"
-      subtitle="Create deterministic export batches with traceable checksum"
+      subtitle={`Create deterministic export batches for ${periodDisplayLabel}`}
       actions={<StatusChip label={status.replaceAll("_", " ")} tone={statusTone(status)} />}
     >
       {message ? <p className="alert">{message}</p> : null}

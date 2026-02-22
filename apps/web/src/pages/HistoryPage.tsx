@@ -4,12 +4,12 @@ import { statusTone } from "../lib/ui";
 import { useAppState } from "../state/AppStateContext";
 
 export function HistoryPage() {
-  const { status, revisionNo, approvals } = useAppState();
+  const { status, revisionNo, approvals, periodDisplayLabel } = useAppState();
 
   return (
     <Panel
       title="History"
-      subtitle="Revision chain and approval/audit timeline"
+      subtitle={`Revision chain and approval/audit timeline for ${periodDisplayLabel}`}
       actions={<StatusChip label={`Revision ${revisionNo}`} tone="info" />}
     >
       <p>

@@ -13,7 +13,8 @@ export function ManagerReviewPage() {
     setManagerNote,
     managerApprove,
     managerReject,
-    dayEntries
+    dayEntries,
+    periodDisplayLabel
   } = useAppState();
   const [message, setMessage] = useState("");
 
@@ -22,7 +23,7 @@ export function ManagerReviewPage() {
   return (
     <Panel
       title="Manager Review Detail"
-      subtitle="Confirm OT/PH worked then approve or reject"
+      subtitle={`Review monthly entries for ${periodDisplayLabel}`}
       actions={<StatusChip label={status.replaceAll("_", " ")} tone={statusTone(status)} />}
     >
       {message ? <p className="alert">{message}</p> : null}
@@ -48,8 +49,8 @@ export function ManagerReviewPage() {
             <tr>
               <th>Date</th>
               <th>Day Type</th>
-              <th>Start</th>
-              <th>Finish</th>
+              <th>Project</th>
+              <th>Hours</th>
               <th>Absence</th>
             </tr>
           </thead>
@@ -58,8 +59,8 @@ export function ManagerReviewPage() {
               <tr key={entry.date}>
                 <td>{entry.date}</td>
                 <td>{entry.dayType}</td>
-                <td>{entry.startLocal || "--"}</td>
-                <td>{entry.endLocal || "--"}</td>
+                <td>{entry.projectDescription || "--"}</td>
+                <td>{entry.hoursWorked.toFixed(2)}</td>
                 <td>{entry.absenceCode || "--"}</td>
               </tr>
             ))}

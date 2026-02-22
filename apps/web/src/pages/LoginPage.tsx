@@ -11,7 +11,7 @@ const ROLE_DESTINATION: Record<AppRole, string> = {
 };
 
 const ROLE_DESCRIPTIONS: Record<AppRole, string> = {
-  EMPLOYEE: "Enter daily rows, validate, and submit",
+  EMPLOYEE: "Enter monthly rows with projects/hours and plan annual leave",
   MANAGER: "Approve/reject OT and PH worked",
   PAYROLL: "Resolve exceptions, validate, export, lock",
   ADMIN: "Manage calendar rules and leave settings"
