@@ -1,5 +1,5 @@
 import { type PropsWithChildren } from "react";
-import { Link } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 import { BRANDING } from "@timesheet/shared";
 import { statusTone } from "../lib/ui";
 import { useAppState } from "../state/AppStateContext";
@@ -37,9 +37,13 @@ export function AppShell({ children }: PropsWithChildren) {
 
       <nav className="nav">
         {links.map(([to, label]) => (
-          <Link key={to} to={to} className="nav-link">
+          <NavLink
+            key={to}
+            to={to}
+            className={({ isActive }) => `nav-link ${isActive ? "nav-link-active" : ""}`.trim()}
+          >
             {label}
-          </Link>
+          </NavLink>
         ))}
       </nav>
 
