@@ -1,0 +1,89 @@
+:root {
+  color: #0c1d34;
+  background: linear-gradient(180deg, #f2f7fb 0%, #ffffff 60%);
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.layout {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+}
+
+.header {
+  padding: 20px 24px 8px;
+  border-bottom: 1px solid #d7e3ef;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.header p {
+  margin: 4px 0 0;
+  color: #345;
+}
+
+.nav {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 24px;
+  background: #f7fafc;
+  border-bottom: 1px solid #d7e3ef;
+}
+
+.nav-link {
+  text-decoration: none;
+  color: #084b8a;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #e6f1fc;
+  font-size: 0.9rem;
+}
+
+.content {
+  padding: 24px;
+}
+
+.panel {
+  max-width: 900px;
+  background: #fff;
+  border: 1px solid #d7e3ef;
+  border-radius: 14px;
+  padding: 20px;
+}
+
+.footer {
+  padding: 12px 24px;
+  border-top: 1px solid #d7e3ef;
+  text-align: center;
+  color: #456;
+  font-size: 0.9rem;
+}
+
+@media (max-width: 720px) {
+  .content {
+    padding: 14px;
+  }
+
+  .panel {
+    padding: 14px;
+  }
+
+  .header,
+  .nav,
+  .footer {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+}
