@@ -71,14 +71,17 @@ export function TimesheetEntryPage() {
     addProjectLine,
     updateProjectLine,
     removeProjectLine,
+    signAsEmployee,
     submitTimesheet,
     selectedMonth,
     setSelectedMonth,
     currentDateIso,
     periodDisplayLabel,
+    employeeSignature,
     sqliteSync
   } = useAppState();
   const [message, setMessage] = useState<string>("");
+  const [employeeSigner, setEmployeeSigner] = useState<string>("");
 
   const editable = isEditable(status);
 
@@ -127,6 +130,44 @@ export function TimesheetEntryPage() {
           <input value={currentDateIso} readOnly />
         </label>
       </div>
+
+      <section className="signature-panel">
+        <div className="signature-panel-head">
+          <h3>Employee Electronic Signature</h3>
+          <StatusChip label={employeeSignature ? "Employee Signed" : "Signature Required"} tone={employeeSignature ? "good" : "warn"} />
+        </div>
+        <p className="subtle-note">
+          Sign before submit. Any edit to daily rows clears signatures for this revision.
+        </p>
+        <div className="signature-form">
+          <label className="field">
+            Employee full name
+            <input
+              value={employeeSigner}
+              onChange={(event) => setEmployeeSigner(event.target.value)}
+              placeholder="Type full legal name"
+              disabled={!editable}
+            />
+          </label>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={!editable}
+            onClick={() => {
+              const result = signAsEmployee(employeeSigner);
+              setMessage(result.message);
+            }}
+          >
+            Electronically Sign
+          </button>
+        </div>
+        {employeeSignature ? (
+          <p className="subtle-note">
+            Signed by {employeeSignature.signedBy} at {new Date(employeeSignature.signedAt).toLocaleString()} | hash{" "}
+            {employeeSignature.signatureHash}
+          </p>
+        ) : null}
+      </section>
 
       <div className="table-wrap">
         <table className="table-grid">
@@ -288,7 +329,7 @@ export function TimesheetEntryPage() {
         <button
           type="button"
           className="btn btn-primary"
-          disabled={!editable}
+          disabled={!editable || !employeeSignature}
           onClick={() => {
             const result = submitTimesheet();
             setMessage(result.message);

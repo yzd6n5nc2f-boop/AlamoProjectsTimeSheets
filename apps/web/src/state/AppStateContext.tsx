@@ -42,6 +42,14 @@ export interface PlannedLeaveRecord {
   note: string;
 }
 
+export interface ElectronicSignature {
+  signedBy: string;
+  signedAt: string;
+  signatureHash: string;
+  declaration: string;
+  revisionNo: number;
+}
+
 interface MonthTimesheetState {
   status: WorkflowStatus;
   revisionNo: number;
@@ -49,6 +57,8 @@ interface MonthTimesheetState {
   approvals: ApprovalEvent[];
   exportBatches: ExportBatch[];
   managerNote: string;
+  employeeSignature: ElectronicSignature | null;
+  managerSignature: ElectronicSignature | null;
 }
 
 interface SqliteSyncState {
@@ -73,12 +83,16 @@ interface AppStateValue {
   exportBatches: ExportBatch[];
   managerNote: string;
   setManagerNote: (value: string) => void;
+  employeeSignature: ElectronicSignature | null;
+  managerSignature: ElectronicSignature | null;
   computed: ReturnType<typeof calculateTimesheet>;
   sqliteSync: SqliteSyncState;
   updateDayEntry: (date: string, patch: Partial<DayEntry>) => void;
   addProjectLine: (date: string) => void;
   updateProjectLine: (date: string, lineId: string, patch: Partial<ProjectLine>) => void;
   removeProjectLine: (date: string, lineId: string) => void;
+  signAsEmployee: (signedBy: string) => { ok: boolean; message: string };
+  signAsManager: (signedBy: string) => { ok: boolean; message: string };
   submitTimesheet: () => { ok: boolean; message: string };
   managerApprove: () => { ok: boolean; message: string };
   managerReject: () => { ok: boolean; message: string };
@@ -113,6 +127,10 @@ const INITIAL_RULES: RuleSettings = {
 
 const ANNUAL_LEAVE_ENTITLEMENT_HOURS = 152;
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8080";
+const EMPLOYEE_SIGNATURE_DECLARATION =
+  "I certify this monthly timesheet is true and complete to the best of my knowledge.";
+const MANAGER_SIGNATURE_DECLARATION =
+  "I approve this monthly timesheet after review and confirm approvals for overtime/public holiday work where required.";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -198,8 +216,78 @@ function buildMonthState(monthKey: string, settings: RuleSettings, todayIso: str
     dayEntries: buildMonthEntries(monthKey, settings, todayIso),
     approvals: [],
     exportBatches: [],
-    managerNote: ""
+    managerNote: "",
+    employeeSignature: null,
+    managerSignature: null
   };
+}
+
+function normalizeSignature(rawSignature: unknown): ElectronicSignature | null {
+  if (!rawSignature || typeof rawSignature !== "object") {
+    return null;
+  }
+
+  const raw = rawSignature as {
+    signedBy?: unknown;
+    signedAt?: unknown;
+    signatureHash?: unknown;
+    declaration?: unknown;
+    revisionNo?: unknown;
+  };
+
+  const signedBy = typeof raw.signedBy === "string" ? raw.signedBy.trim() : "";
+  const signatureHash = typeof raw.signatureHash === "string" ? raw.signatureHash.trim() : "";
+
+  if (signedBy.length === 0 || signatureHash.length === 0) {
+    return null;
+  }
+
+  return {
+    signedBy,
+    signedAt: typeof raw.signedAt === "string" ? raw.signedAt : "",
+    signatureHash,
+    declaration: typeof raw.declaration === "string" ? raw.declaration : "",
+    revisionNo: Number.isFinite(Number(raw.revisionNo)) ? Number(raw.revisionNo) : 1
+  };
+}
+
+function signatureEntriesSnapshot(entries: DayEntry[]): unknown[] {
+  return [...entries]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((entry) => ({
+      date: entry.date,
+      absenceCode: entry.absenceCode.trim(),
+      notes: entry.notes.trim(),
+      projectLines: [...entry.projectLines]
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map((line) => ({
+          projectDescription: line.projectDescription.trim(),
+          hours: Number(line.hours.toFixed(2))
+        }))
+    }));
+}
+
+function buildSignatureHash(
+  role: "EMPLOYEE" | "MANAGER",
+  signedBy: string,
+  monthKey: string,
+  monthState: MonthTimesheetState,
+  declaration: string,
+  managerNote: string
+): string {
+  const payload = JSON.stringify({
+    role,
+    monthKey,
+    revisionNo: monthState.revisionNo,
+    status: monthState.status,
+    signedBy: signedBy.trim(),
+    declaration,
+    managerNote: managerNote.trim(),
+    dayEntries: signatureEntriesSnapshot(monthState.dayEntries),
+    employeeSignatureHash: monthState.employeeSignature?.signatureHash ?? null
+  });
+
+  return hashForBatch(payload);
 }
 
 function normalizeProjectLines(rawProjectLines: unknown): ProjectLine[] {
@@ -230,6 +318,8 @@ function normalizeMonthState(
     approvals?: unknown;
     exportBatches?: unknown;
     managerNote?: unknown;
+    employeeSignature?: unknown;
+    managerSignature?: unknown;
   };
 
   if (!raw || typeof raw !== "object") {
@@ -273,6 +363,10 @@ function normalizeMonthState(
     return weekday !== 0 && weekday !== 6;
   });
 
+  const revisionNo = Number.isFinite(Number(raw.revisionNo)) ? Number(raw.revisionNo) : fallback.revisionNo;
+  const employeeSignature = normalizeSignature(raw.employeeSignature);
+  const managerSignature = normalizeSignature(raw.managerSignature);
+
   return {
     status:
       raw.status === "DRAFT" ||
@@ -283,11 +377,13 @@ function normalizeMonthState(
       raw.status === "LOCKED"
         ? raw.status
         : fallback.status,
-    revisionNo: Number.isFinite(Number(raw.revisionNo)) ? Number(raw.revisionNo) : fallback.revisionNo,
+    revisionNo,
     dayEntries: dayEntries.length > 0 ? dayEntries : fallback.dayEntries,
     approvals: Array.isArray(raw.approvals) ? (raw.approvals as ApprovalEvent[]) : fallback.approvals,
     exportBatches: Array.isArray(raw.exportBatches) ? (raw.exportBatches as ExportBatch[]) : fallback.exportBatches,
-    managerNote: typeof raw.managerNote === "string" ? raw.managerNote : fallback.managerNote
+    managerNote: typeof raw.managerNote === "string" ? raw.managerNote : fallback.managerNote,
+    employeeSignature: employeeSignature && employeeSignature.revisionNo === revisionNo ? employeeSignature : null,
+    managerSignature: managerSignature && managerSignature.revisionNo === revisionNo ? managerSignature : null
   };
 }
 
@@ -373,6 +469,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
       updateCurrentMonth((monthState) => ({
         ...monthState,
+        employeeSignature: null,
+        managerSignature: null,
         dayEntries: monthState.dayEntries.map((entry) => {
           if (entry.date !== date) {
             return entry;
@@ -408,6 +506,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
       updateCurrentMonth((monthState) => ({
         ...monthState,
+        employeeSignature: null,
+        managerSignature: null,
         dayEntries: monthState.dayEntries.map((entry) => {
           if (entry.date !== date) {
             return entry;
@@ -432,6 +532,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
       updateCurrentMonth((monthState) => ({
         ...monthState,
+        employeeSignature: null,
+        managerSignature: null,
         dayEntries: monthState.dayEntries.map((entry) => {
           if (entry.date !== date) {
             return entry;
@@ -459,6 +561,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
       updateCurrentMonth((monthState) => ({
         ...monthState,
+        employeeSignature: null,
+        managerSignature: null,
         dayEntries: monthState.dayEntries.map((entry) => {
           if (entry.date !== date) {
             return entry;
@@ -483,6 +587,115 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     [currentMonthData.status, updateCurrentMonth]
   );
 
+  const signAsEmployee = useCallback(
+    (signedBy: string) => {
+      const signer = signedBy.trim();
+
+      if (!(currentMonthData.status === "DRAFT" || currentMonthData.status === "MANAGER_REJECTED")) {
+        return { ok: false, message: "Employee signing is only available in Draft or Rejected status." };
+      }
+
+      if (computed.hasBlockingErrors) {
+        return { ok: false, message: "Fix validation errors before signing." };
+      }
+
+      if (signer.length < 3) {
+        return { ok: false, message: "Enter the employee full name for electronic signature." };
+      }
+
+      const signedAt = nowIso();
+
+      updateCurrentMonth((monthState) => {
+        const signatureHash = buildSignatureHash(
+          "EMPLOYEE",
+          signer,
+          selectedMonth,
+          monthState,
+          EMPLOYEE_SIGNATURE_DECLARATION,
+          monthState.managerNote
+        );
+
+        return {
+          ...monthState,
+          employeeSignature: {
+            signedBy: signer,
+            signedAt,
+            signatureHash,
+            declaration: EMPLOYEE_SIGNATURE_DECLARATION,
+            revisionNo: monthState.revisionNo
+          },
+          managerSignature: null,
+          approvals: [
+            ...monthState.approvals,
+            {
+              at: signedAt,
+              actor: "Employee",
+              action: "EMPLOYEE_E_SIGN",
+              note: `Employee e-signed by ${signer}; hash ${signatureHash}`
+            }
+          ]
+        };
+      });
+
+      return { ok: true, message: "Employee electronic signature captured." };
+    },
+    [computed.hasBlockingErrors, currentMonthData.status, selectedMonth, updateCurrentMonth]
+  );
+
+  const signAsManager = useCallback(
+    (signedBy: string) => {
+      const signer = signedBy.trim();
+
+      if (currentMonthData.status !== "SUBMITTED") {
+        return { ok: false, message: "Manager signing is only available for submitted timesheets." };
+      }
+
+      if (!currentMonthData.employeeSignature || currentMonthData.employeeSignature.revisionNo !== currentMonthData.revisionNo) {
+        return { ok: false, message: "Valid employee electronic signature is required before manager signing." };
+      }
+
+      if (signer.length < 3) {
+        return { ok: false, message: "Enter the manager full name for electronic signature." };
+      }
+
+      const signedAt = nowIso();
+
+      updateCurrentMonth((monthState) => {
+        const signatureHash = buildSignatureHash(
+          "MANAGER",
+          signer,
+          selectedMonth,
+          monthState,
+          MANAGER_SIGNATURE_DECLARATION,
+          monthState.managerNote
+        );
+
+        return {
+          ...monthState,
+          managerSignature: {
+            signedBy: signer,
+            signedAt,
+            signatureHash,
+            declaration: MANAGER_SIGNATURE_DECLARATION,
+            revisionNo: monthState.revisionNo
+          },
+          approvals: [
+            ...monthState.approvals,
+            {
+              at: signedAt,
+              actor: "Manager",
+              action: "MANAGER_E_SIGN",
+              note: `Manager e-signed by ${signer}; hash ${signatureHash}`
+            }
+          ]
+        };
+      });
+
+      return { ok: true, message: "Manager electronic signature captured." };
+    },
+    [currentMonthData.employeeSignature, currentMonthData.revisionNo, currentMonthData.status, selectedMonth, updateCurrentMonth]
+  );
+
   const submitTimesheet = useCallback(() => {
     if (!(currentMonthData.status === "DRAFT" || currentMonthData.status === "MANAGER_REJECTED")) {
       return { ok: false, message: "Only Draft or Rejected timesheets can be submitted." };
@@ -492,9 +705,14 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       return { ok: false, message: "Fix validation errors before submit." };
     }
 
+    if (!currentMonthData.employeeSignature || currentMonthData.employeeSignature.revisionNo !== currentMonthData.revisionNo) {
+      return { ok: false, message: "Employee electronic signature is required before submit." };
+    }
+
     updateCurrentMonth((monthState) => ({
       ...monthState,
       status: "SUBMITTED",
+      managerSignature: null,
       approvals: [
         ...monthState.approvals,
         {
@@ -507,11 +725,15 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     }));
 
     return { ok: true, message: "Timesheet submitted." };
-  }, [computed.hasBlockingErrors, currentMonthData.status, selectedMonth, updateCurrentMonth]);
+  }, [computed.hasBlockingErrors, currentMonthData.employeeSignature, currentMonthData.revisionNo, currentMonthData.status, selectedMonth, updateCurrentMonth]);
 
   const managerApprove = useCallback(() => {
     if (currentMonthData.status !== "SUBMITTED") {
       return { ok: false, message: "Manager can approve only submitted timesheets." };
+    }
+
+    if (!currentMonthData.managerSignature || currentMonthData.managerSignature.revisionNo !== currentMonthData.revisionNo) {
+      return { ok: false, message: "Manager electronic signature is required before approval." };
     }
 
     if (computed.requiresManagerApproval && currentMonthData.managerNote.trim().length === 0) {
@@ -533,7 +755,14 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     }));
 
     return { ok: true, message: "Manager approved." };
-  }, [computed.requiresManagerApproval, currentMonthData.managerNote, currentMonthData.status, updateCurrentMonth]);
+  }, [
+    computed.requiresManagerApproval,
+    currentMonthData.managerNote,
+    currentMonthData.managerSignature,
+    currentMonthData.revisionNo,
+    currentMonthData.status,
+    updateCurrentMonth
+  ]);
 
   const managerReject = useCallback(() => {
     if (currentMonthData.status !== "SUBMITTED") {
@@ -548,6 +777,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       ...monthState,
       status: "MANAGER_REJECTED",
       revisionNo: monthState.revisionNo + 1,
+      employeeSignature: null,
+      managerSignature: null,
       approvals: [
         ...monthState.approvals,
         {
@@ -567,6 +798,10 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       return { ok: false, message: "Payroll validation requires manager approval first." };
     }
 
+    if (!currentMonthData.employeeSignature || !currentMonthData.managerSignature) {
+      return { ok: false, message: "Employee and manager electronic signatures are required before payroll validation." };
+    }
+
     updateCurrentMonth((monthState) => ({
       ...monthState,
       status: "PAYROLL_VALIDATED",
@@ -582,7 +817,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     }));
 
     return { ok: true, message: "Payroll validated." };
-  }, [currentMonthData.status, updateCurrentMonth]);
+  }, [currentMonthData.employeeSignature, currentMonthData.managerSignature, currentMonthData.status, updateCurrentMonth]);
 
   const lockPeriod = useCallback(() => {
     if (currentMonthData.status !== "PAYROLL_VALIDATED") {
@@ -621,7 +856,9 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         date: entry.date,
         projectLines: entry.projectLines,
         absenceCode: entry.absenceCode
-      }))
+      })),
+      employeeSignatureHash: currentMonthData.employeeSignature?.signatureHash ?? null,
+      managerSignatureHash: currentMonthData.managerSignature?.signatureHash ?? null
     });
 
     const checksum = hashForBatch(signature);
@@ -649,7 +886,16 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     }));
 
     return { ok: true, message: `Export batch ${batchId} created.` };
-  }, [computed.periodTotals, currentMonthData.dayEntries, currentMonthData.revisionNo, currentMonthData.status, selectedMonth, updateCurrentMonth]);
+  }, [
+    computed.periodTotals,
+    currentMonthData.dayEntries,
+    currentMonthData.employeeSignature,
+    currentMonthData.managerSignature,
+    currentMonthData.revisionNo,
+    currentMonthData.status,
+    selectedMonth,
+    updateCurrentMonth
+  ]);
 
   const updateRuleSettings = useCallback(
     (patch: Partial<RuleSettings>) => {
@@ -662,6 +908,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
           for (const [monthKey, monthState] of Object.entries(existingMonths)) {
             updated[monthKey] = {
               ...monthState,
+              employeeSignature: monthState.status === "LOCKED" ? monthState.employeeSignature : null,
+              managerSignature: monthState.status === "LOCKED" ? monthState.managerSignature : null,
               dayEntries: monthState.dayEntries.map((entry) => ({
                 ...entry,
                 dayType: resolveDayType(entry.date, next)
@@ -680,7 +928,11 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
   const setManagerNote = useCallback(
     (value: string) => {
-      updateCurrentMonth((monthState) => ({ ...monthState, managerNote: value }));
+      updateCurrentMonth((monthState) => ({
+        ...monthState,
+        managerNote: value,
+        managerSignature: monthState.managerNote === value ? monthState.managerSignature : null
+      }));
     },
     [updateCurrentMonth]
   );
@@ -848,12 +1100,16 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     exportBatches: currentMonthData.exportBatches,
     managerNote: currentMonthData.managerNote,
     setManagerNote,
+    employeeSignature: currentMonthData.employeeSignature,
+    managerSignature: currentMonthData.managerSignature,
     computed,
     sqliteSync,
     updateDayEntry,
     addProjectLine,
     updateProjectLine,
     removeProjectLine,
+    signAsEmployee,
+    signAsManager,
     submitTimesheet,
     managerApprove,
     managerReject,

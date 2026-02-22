@@ -92,7 +92,7 @@ p {
 }
 
 .brand-logo-lockup-image {
-  width: 360px;
+  width: 420px;
   max-width: 100%;
   height: auto;
   display: block;
@@ -527,6 +527,43 @@ p {
   margin-bottom: 10px;
 }
 
+.signature-panel {
+  margin: 14px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: #f6f9fd;
+}
+
+.signature-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.signature-panel-head h3 {
+  font-size: 1rem;
+}
+
+.signature-chip-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.signature-form {
+  display: grid;
+  grid-template-columns: minmax(240px, 360px) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.signature-form .field {
+  margin-top: 0;
+}
+
 .timeline {
   display: grid;
   gap: 10px;
@@ -576,10 +613,14 @@ p {
   }
 
   .brand-logo-lockup-image {
-    width: 280px;
+    width: 300px;
   }
 
   .panel-head h2 {
     font-size: 1.45rem;
+  }
+
+  .signature-form {
+    grid-template-columns: 1fr;
   }
 }

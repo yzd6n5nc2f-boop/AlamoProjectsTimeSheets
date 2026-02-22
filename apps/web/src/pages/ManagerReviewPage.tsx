@@ -11,12 +11,16 @@ export function ManagerReviewPage() {
     computed,
     managerNote,
     setManagerNote,
+    employeeSignature,
+    managerSignature,
+    signAsManager,
     managerApprove,
     managerReject,
     dayEntries,
     periodDisplayLabel
   } = useAppState();
   const [message, setMessage] = useState("");
+  const [managerSigner, setManagerSigner] = useState("");
 
   const canDecide = status === "SUBMITTED";
 
@@ -73,6 +77,52 @@ export function ManagerReviewPage() {
         </table>
       </div>
 
+      <section className="signature-panel">
+        <div className="signature-panel-head">
+          <h3>Electronic Signatures</h3>
+          <div className="signature-chip-row">
+            <StatusChip label={employeeSignature ? "Employee Signed" : "Employee Missing"} tone={employeeSignature ? "good" : "bad"} />
+            <StatusChip label={managerSignature ? "Manager Signed" : "Manager Missing"} tone={managerSignature ? "good" : "warn"} />
+          </div>
+        </div>
+        {employeeSignature ? (
+          <p className="subtle-note">
+            Employee: {employeeSignature.signedBy} at {new Date(employeeSignature.signedAt).toLocaleString()} | hash{" "}
+            {employeeSignature.signatureHash}
+          </p>
+        ) : (
+          <p className="subtle-note">Employee must electronically sign before manager can sign.</p>
+        )}
+        <div className="signature-form">
+          <label className="field">
+            Manager full name
+            <input
+              value={managerSigner}
+              onChange={(event) => setManagerSigner(event.target.value)}
+              placeholder="Type full legal name"
+              disabled={!canDecide}
+            />
+          </label>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={!canDecide}
+            onClick={() => {
+              const result = signAsManager(managerSigner);
+              setMessage(result.message);
+            }}
+          >
+            Manager Electronic Sign
+          </button>
+        </div>
+        {managerSignature ? (
+          <p className="subtle-note">
+            Manager: {managerSignature.signedBy} at {new Date(managerSignature.signedAt).toLocaleString()} | hash{" "}
+            {managerSignature.signatureHash}
+          </p>
+        ) : null}
+      </section>
+
       <label className="field">
         Manager decision note
         <textarea
@@ -88,7 +138,7 @@ export function ManagerReviewPage() {
         <button
           type="button"
           className="btn btn-primary"
-          disabled={!canDecide}
+          disabled={!canDecide || !managerSignature}
           onClick={() => {
             const result = managerApprove();
             setMessage(result.message);
