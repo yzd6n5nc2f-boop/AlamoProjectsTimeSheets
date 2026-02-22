@@ -1,48 +1,30 @@
 import { Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
-import { Page } from "./pages/Page";
+import { AdminRulesPage } from "./pages/AdminRulesPage";
+import { EmployeeDashboardPage } from "./pages/EmployeeDashboardPage";
+import { HistoryPage } from "./pages/HistoryPage";
+import { LeaveAdminPage } from "./pages/LeaveAdminPage";
+import { LoginPage } from "./pages/LoginPage";
+import { ManagerQueuePage } from "./pages/ManagerQueuePage";
+import { ManagerReviewPage } from "./pages/ManagerReviewPage";
+import { PayrollDashboardPage } from "./pages/PayrollDashboardPage";
+import { PayrollExportPage } from "./pages/PayrollExportPage";
+import { TimesheetEntryPage } from "./pages/TimesheetEntryPage";
 
 export function App() {
   return (
     <AppShell>
       <Routes>
-        <Route path="/" element={<Page title="Login" description="Authenticate to Timesheet." />} />
-        <Route
-          path="/employee"
-          element={<Page title="Employee Dashboard" description="View period status and quick actions." />}
-        />
-        <Route
-          path="/timesheet"
-          element={<Page title="Timesheet Entry Grid" description="Paper-like daily grid with deterministic totals." />}
-        />
-        <Route
-          path="/history"
-          element={<Page title="History" description="Historical revisions, approvals, and export linkage." />}
-        />
-        <Route
-          path="/manager/queue"
-          element={<Page title="Manager Queue" description="Speed-optimised approval queue with status chips." />}
-        />
-        <Route
-          path="/manager/review"
-          element={<Page title="Manager Review Detail" description="Review submitted rows and approve or reject with notes." />}
-        />
-        <Route
-          path="/payroll/dashboard"
-          element={<Page title="Payroll Dashboard" description="Exception-first validation and export readiness checks." />}
-        />
-        <Route
-          path="/payroll/export"
-          element={<Page title="Payroll Export" description="Generate deterministic CSV/XLSX export batches." />}
-        />
-        <Route
-          path="/admin/rules"
-          element={<Page title="Admin Calendar and Rules" description="Manage effective-dated rules, holidays, and paid-hours policies." />}
-        />
-        <Route
-          path="/admin/leave"
-          element={<Page title="Leave Admin" description="Manage leave codes, balances, and ledger integrity." />}
-        />
+        <Route path="/" element={<LoginPage />} />
+        <Route path="/employee" element={<EmployeeDashboardPage />} />
+        <Route path="/timesheet" element={<TimesheetEntryPage />} />
+        <Route path="/history" element={<HistoryPage />} />
+        <Route path="/manager/queue" element={<ManagerQueuePage />} />
+        <Route path="/manager/review" element={<ManagerReviewPage />} />
+        <Route path="/payroll/dashboard" element={<PayrollDashboardPage />} />
+        <Route path="/payroll/export" element={<PayrollExportPage />} />
+        <Route path="/admin/rules" element={<AdminRulesPage />} />
+        <Route path="/admin/leave" element={<LeaveAdminPage />} />
       </Routes>
     </AppShell>
   );

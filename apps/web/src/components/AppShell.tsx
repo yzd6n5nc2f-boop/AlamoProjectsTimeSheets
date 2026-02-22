@@ -1,6 +1,9 @@
 import { type PropsWithChildren } from "react";
 import { Link } from "react-router-dom";
 import { BRANDING } from "@timesheet/shared";
+import { statusTone } from "../lib/ui";
+import { useAppState } from "../state/AppStateContext";
+import { StatusChip } from "./StatusChip";
 
 const links = [
   ["/", "Login"],
@@ -16,12 +19,19 @@ const links = [
 ] as const;
 
 export function AppShell({ children }: PropsWithChildren) {
+  const { role, status, periodLabel } = useAppState();
+
   return (
     <div className="layout">
       <header className="header">
         <div>
           <h1>{BRANDING.product}</h1>
           <p>{BRANDING.subtitle}</p>
+        </div>
+        <div className="header-chips">
+          <StatusChip label={role} tone="info" />
+          <StatusChip label={status.replaceAll("_", " ")} tone={statusTone(status)} />
+          <StatusChip label={periodLabel} tone="neutral" />
         </div>
       </header>
 

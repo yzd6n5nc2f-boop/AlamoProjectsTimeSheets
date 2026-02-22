@@ -26,6 +26,23 @@ npm run infra:seed:staging
 open http://localhost
 ```
 
+## Build a macOS `.app` Bundle
+
+```bash
+cd /Users/mauriciojardim/AlamoProjectsTimeSheets
+./scripts/build-timesheet-macos-app.sh
+open /Users/mauriciojardim/AlamoProjectsTimeSheets/dist-macos/Timesheet.app
+```
+
+Artifacts generated:
+- `/Users/mauriciojardim/AlamoProjectsTimeSheets/dist-macos/Timesheet.app`
+- `/Users/mauriciojardim/AlamoProjectsTimeSheets/dist-macos/Timesheet.zip`
+
+Launcher behavior:
+- Tries full Docker staging stack first.
+- Falls back to frontend-only mode at `http://localhost:3000` if Docker is unavailable.
+- Logs to `~/Library/Logs/Timesheet/`.
+
 ## Full Commands to Run Without Docker (Local Dev)
 
 Terminal 1:
