@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { Panel } from "../components/Panel";
 import { StatusChip } from "../components/StatusChip";
-import { formatDate, statusTone } from "../lib/ui";
+import { formatDate, shiftMonthKey, statusTone } from "../lib/ui";
 import { minutesToHoursString } from "../lib/timesheetEngine";
 import { useAppState } from "../state/AppStateContext";
 
@@ -52,16 +52,24 @@ export function TimesheetEntryPage() {
   return (
     <Panel
       title="Monthly Timesheet Entry"
-      subtitle={`Month selected: ${periodDisplayLabel}`}
+      subtitle={`Month selected: ${periodDisplayLabel} (work week rows only)`}
       actions={<StatusChip label={status.replaceAll("_", " ")} tone={statusTone(status)} />}
     >
       {message ? <p className="alert">{message}</p> : null}
 
       <div className="form-grid">
-        <label className="field inline-field">
-          Select month
-          <input type="month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} />
-        </label>
+        <div className="field">
+          <span>Select month</span>
+          <div className="month-switcher">
+            <button type="button" className="btn" onClick={() => setSelectedMonth(shiftMonthKey(selectedMonth, -1))}>
+              Previous Month
+            </button>
+            <input type="month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} />
+            <button type="button" className="btn" onClick={() => setSelectedMonth(shiftMonthKey(selectedMonth, 1))}>
+              Next Month
+            </button>
+          </div>
+        </div>
         <label className="field inline-field">
           Current date
           <input value={currentDateIso} readOnly />

@@ -3,7 +3,7 @@ import { MetricCard } from "../components/MetricCard";
 import { Panel } from "../components/Panel";
 import { StatusChip } from "../components/StatusChip";
 import { minutesToHoursString } from "../lib/timesheetEngine";
-import { statusTone } from "../lib/ui";
+import { shiftMonthKey, statusTone } from "../lib/ui";
 import { useAppState } from "../state/AppStateContext";
 
 export function EmployeeDashboardPage() {
@@ -27,10 +27,18 @@ export function EmployeeDashboardPage() {
       actions={<StatusChip label={status.replaceAll("_", " ")} tone={statusTone(status)} />}
     >
       <div className="form-grid">
-        <label className="field inline-field">
-          Select month
-          <input type="month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} />
-        </label>
+        <div className="field">
+          <span>Select month</span>
+          <div className="month-switcher">
+            <button type="button" className="btn" onClick={() => setSelectedMonth(shiftMonthKey(selectedMonth, -1))}>
+              Previous Month
+            </button>
+            <input type="month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} />
+            <button type="button" className="btn" onClick={() => setSelectedMonth(shiftMonthKey(selectedMonth, 1))}>
+              Next Month
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="metrics-grid">

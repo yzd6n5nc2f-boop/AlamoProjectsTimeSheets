@@ -125,6 +125,13 @@ function buildMonthEntries(monthKey: string, settings: RuleSettings, todayIso: s
 
   for (let day = 1; day <= totalDays; day += 1) {
     const date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const weekday = new Date(`${date}T00:00:00`).getDay();
+
+    // Monthly grid shows only work week rows (Mon-Fri).
+    if (weekday === 0 || weekday === 6) {
+      continue;
+    }
+
     const dayType = resolveDayType(date, settings);
     const isPastOrCurrent = date <= todayIso;
 
@@ -140,7 +147,7 @@ function buildMonthEntries(monthKey: string, settings: RuleSettings, todayIso: s
       continue;
     }
 
-    if (!isPastOrCurrent || dayType === "WEEKEND") {
+    if (!isPastOrCurrent) {
       entries.push({
         date,
         dayType,

@@ -27,3 +27,18 @@ export function formatDate(dateValue: string): string {
     year: "numeric"
   });
 }
+
+export function shiftMonthKey(monthKey: string, delta: number): string {
+  const [yearText, monthText] = monthKey.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return monthKey;
+  }
+
+  const date = new Date(year, month - 1 + delta, 1);
+  const nextYear = date.getFullYear();
+  const nextMonth = String(date.getMonth() + 1).padStart(2, "0");
+  return `${nextYear}-${nextMonth}`;
+}
