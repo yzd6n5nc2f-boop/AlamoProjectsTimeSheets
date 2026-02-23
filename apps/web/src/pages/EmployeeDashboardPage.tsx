@@ -60,7 +60,10 @@ export function EmployeeDashboardPage() {
           Open Leave Planner
         </button>
         <button type="button" className="btn" onClick={() => navigate("/history")}>
-          View History
+          View Status
+        </button>
+        <button type="button" className="btn" onClick={() => navigate("/signature/setup")}>
+          Signature Setup
         </button>
       </div>
     </Panel>

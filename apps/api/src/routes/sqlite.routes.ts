@@ -5,7 +5,8 @@ import { requireRole } from "../middleware/rbac.middleware.js";
 
 const sqliteStateSchema = z.object({
   months: z.record(z.string(), z.unknown()),
-  plannedLeave: z.array(z.unknown())
+  plannedLeave: z.array(z.unknown()),
+  signatureProfiles: z.record(z.string(), z.unknown()).default({})
 });
 
 export const sqliteRouter = Router();

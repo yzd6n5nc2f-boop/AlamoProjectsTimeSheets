@@ -1,4 +1,5 @@
 import { Fragment, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Panel } from "../components/Panel";
 import { StatusChip } from "../components/StatusChip";
 import { minutesToHoursString, sumProjectHours, type DayEntry } from "../lib/timesheetEngine";
@@ -77,13 +78,15 @@ export function TimesheetEntryPage() {
     setSelectedMonth,
     currentDateIso,
     periodDisplayLabel,
+    signatureProfiles,
     employeeSignature,
     sqliteSync
   } = useAppState();
   const [message, setMessage] = useState<string>("");
-  const [employeeSigner, setEmployeeSigner] = useState<string>("");
+  const navigate = useNavigate();
 
   const editable = isEditable(status);
+  const employeeProfile = signatureProfiles.EMPLOYEE;
 
   const groupedWeeks = useMemo(() => groupByWorkWeeks(dayEntries), [dayEntries]);
 
@@ -136,25 +139,29 @@ export function TimesheetEntryPage() {
           <h3>Employee Electronic Signature</h3>
           <StatusChip label={employeeSignature ? "Employee Signed" : "Signature Required"} tone={employeeSignature ? "good" : "warn"} />
         </div>
-        <p className="subtle-note">
-          Sign before submit. Any edit to daily rows clears signatures for this revision.
-        </p>
-        <div className="signature-form">
-          <label className="field">
-            Employee full name
-            <input
-              value={employeeSigner}
-              onChange={(event) => setEmployeeSigner(event.target.value)}
-              placeholder="Type full legal name"
-              disabled={!editable}
-            />
-          </label>
+        <p className="subtle-note">Sign before submit. Any edit to daily rows clears signatures for this revision.</p>
+        {employeeProfile ? (
+          <p className="subtle-note">
+            Using saved profile: {employeeProfile.fullName} | hash {employeeProfile.profileHash}
+          </p>
+        ) : (
+          <p className="subtle-note">No employee signature profile found. Set it up once and reuse it each month.</p>
+        )}
+        <div className="inline-actions">
+          <button
+            type="button"
+            className="btn"
+            onClick={() => navigate("/signature/setup")}
+            disabled={!editable}
+          >
+            Set Up Signature
+          </button>
           <button
             type="button"
             className="btn btn-primary"
-            disabled={!editable}
+            disabled={!editable || !employeeProfile}
             onClick={() => {
-              const result = signAsEmployee(employeeSigner);
+              const result = signAsEmployee(employeeProfile?.fullName ?? "");
               setMessage(result.message);
             }}
           >

@@ -42,9 +42,20 @@ export interface PlannedLeaveRecord {
   note: string;
 }
 
+export type SignatoryRole = "EMPLOYEE" | "MANAGER";
+
+export interface SignatureProfile {
+  role: SignatoryRole;
+  fullName: string;
+  setupAt: string;
+  profileHash: string;
+  declaration: string;
+}
+
 export interface ElectronicSignature {
   signedBy: string;
   signedAt: string;
+  profileHash: string;
   signatureHash: string;
   declaration: string;
   revisionNo: number;
@@ -104,6 +115,9 @@ interface AppStateValue {
   plannedLeave: PlannedLeaveRecord[];
   addPlannedLeave: (payload: Omit<PlannedLeaveRecord, "id">) => { ok: boolean; message: string };
   removePlannedLeave: (id: string) => void;
+  signatureProfiles: Partial<Record<SignatoryRole, SignatureProfile>>;
+  upsertSignatureProfile: (role: SignatoryRole, fullName: string) => { ok: boolean; message: string };
+  clearSignatureProfile: (role: SignatoryRole) => void;
   leaveSummary: {
     year: number;
     entitlementHours: number;
@@ -222,6 +236,60 @@ function buildMonthState(monthKey: string, settings: RuleSettings, todayIso: str
   };
 }
 
+function normalizeSignatureProfile(rawProfile: unknown): SignatureProfile | null {
+  if (!rawProfile || typeof rawProfile !== "object") {
+    return null;
+  }
+
+  const raw = rawProfile as {
+    role?: unknown;
+    fullName?: unknown;
+    setupAt?: unknown;
+    profileHash?: unknown;
+    declaration?: unknown;
+  };
+
+  if (raw.role !== "EMPLOYEE" && raw.role !== "MANAGER") {
+    return null;
+  }
+
+  const fullName = typeof raw.fullName === "string" ? raw.fullName.trim() : "";
+  const profileHash = typeof raw.profileHash === "string" ? raw.profileHash.trim() : "";
+
+  if (fullName.length === 0 || profileHash.length === 0) {
+    return null;
+  }
+
+  return {
+    role: raw.role,
+    fullName,
+    setupAt: typeof raw.setupAt === "string" ? raw.setupAt : nowIso(),
+    profileHash,
+    declaration: typeof raw.declaration === "string" ? raw.declaration : ""
+  };
+}
+
+function normalizeSignatureProfiles(rawProfiles: unknown): Partial<Record<SignatoryRole, SignatureProfile>> {
+  if (!rawProfiles || typeof rawProfiles !== "object") {
+    return {};
+  }
+
+  const raw = rawProfiles as Partial<Record<SignatoryRole, unknown>>;
+  const profiles: Partial<Record<SignatoryRole, SignatureProfile>> = {};
+
+  const employee = normalizeSignatureProfile(raw.EMPLOYEE);
+  if (employee) {
+    profiles.EMPLOYEE = employee;
+  }
+
+  const manager = normalizeSignatureProfile(raw.MANAGER);
+  if (manager) {
+    profiles.MANAGER = manager;
+  }
+
+  return profiles;
+}
+
 function normalizeSignature(rawSignature: unknown): ElectronicSignature | null {
   if (!rawSignature || typeof rawSignature !== "object") {
     return null;
@@ -230,21 +298,24 @@ function normalizeSignature(rawSignature: unknown): ElectronicSignature | null {
   const raw = rawSignature as {
     signedBy?: unknown;
     signedAt?: unknown;
+    profileHash?: unknown;
     signatureHash?: unknown;
     declaration?: unknown;
     revisionNo?: unknown;
   };
 
   const signedBy = typeof raw.signedBy === "string" ? raw.signedBy.trim() : "";
+  const profileHash = typeof raw.profileHash === "string" ? raw.profileHash.trim() : "";
   const signatureHash = typeof raw.signatureHash === "string" ? raw.signatureHash.trim() : "";
 
-  if (signedBy.length === 0 || signatureHash.length === 0) {
+  if (signedBy.length === 0 || signatureHash.length === 0 || profileHash.length === 0) {
     return null;
   }
 
   return {
     signedBy,
     signedAt: typeof raw.signedAt === "string" ? raw.signedAt : "",
+    profileHash,
     signatureHash,
     declaration: typeof raw.declaration === "string" ? raw.declaration : "",
     revisionNo: Number.isFinite(Number(raw.revisionNo)) ? Number(raw.revisionNo) : 1
@@ -273,7 +344,8 @@ function buildSignatureHash(
   monthKey: string,
   monthState: MonthTimesheetState,
   declaration: string,
-  managerNote: string
+  managerNote: string,
+  profileHash: string
 ): string {
   const payload = JSON.stringify({
     role,
@@ -281,6 +353,7 @@ function buildSignatureHash(
     revisionNo: monthState.revisionNo,
     status: monthState.status,
     signedBy: signedBy.trim(),
+    profileHash,
     declaration,
     managerNote: managerNote.trim(),
     dayEntries: signatureEntriesSnapshot(monthState.dayEntries),
@@ -419,6 +492,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   });
 
   const [plannedLeave, setPlannedLeave] = useState<PlannedLeaveRecord[]>([]);
+  const [signatureProfiles, setSignatureProfiles] = useState<Partial<Record<SignatoryRole, SignatureProfile>>>({});
   const [hydratedFromSqlite, setHydratedFromSqlite] = useState(false);
 
   const currentMonthData = months[selectedMonth] ?? buildMonthState(selectedMonth, ruleSettings, currentDateIso);
@@ -589,7 +663,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
   const signAsEmployee = useCallback(
     (signedBy: string) => {
-      const signer = signedBy.trim();
+      const profile = signatureProfiles.EMPLOYEE;
+      const signer = (profile?.fullName ?? signedBy).trim();
 
       if (!(currentMonthData.status === "DRAFT" || currentMonthData.status === "MANAGER_REJECTED")) {
         return { ok: false, message: "Employee signing is only available in Draft or Rejected status." };
@@ -600,7 +675,11 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       }
 
       if (signer.length < 3) {
-        return { ok: false, message: "Enter the employee full name for electronic signature." };
+        return { ok: false, message: "Set up employee electronic signature first." };
+      }
+
+      if (!profile) {
+        return { ok: false, message: "Set up employee electronic signature first." };
       }
 
       const signedAt = nowIso();
@@ -612,7 +691,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
           selectedMonth,
           monthState,
           EMPLOYEE_SIGNATURE_DECLARATION,
-          monthState.managerNote
+          monthState.managerNote,
+          profile.profileHash
         );
 
         return {
@@ -620,6 +700,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
           employeeSignature: {
             signedBy: signer,
             signedAt,
+            profileHash: profile.profileHash,
             signatureHash,
             declaration: EMPLOYEE_SIGNATURE_DECLARATION,
             revisionNo: monthState.revisionNo
@@ -639,12 +720,13 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
       return { ok: true, message: "Employee electronic signature captured." };
     },
-    [computed.hasBlockingErrors, currentMonthData.status, selectedMonth, updateCurrentMonth]
+    [computed.hasBlockingErrors, currentMonthData.status, selectedMonth, signatureProfiles.EMPLOYEE, updateCurrentMonth]
   );
 
   const signAsManager = useCallback(
     (signedBy: string) => {
-      const signer = signedBy.trim();
+      const profile = signatureProfiles.MANAGER;
+      const signer = (profile?.fullName ?? signedBy).trim();
 
       if (currentMonthData.status !== "SUBMITTED") {
         return { ok: false, message: "Manager signing is only available for submitted timesheets." };
@@ -655,7 +737,11 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       }
 
       if (signer.length < 3) {
-        return { ok: false, message: "Enter the manager full name for electronic signature." };
+        return { ok: false, message: "Set up manager electronic signature first." };
+      }
+
+      if (!profile) {
+        return { ok: false, message: "Set up manager electronic signature first." };
       }
 
       const signedAt = nowIso();
@@ -667,7 +753,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
           selectedMonth,
           monthState,
           MANAGER_SIGNATURE_DECLARATION,
-          monthState.managerNote
+          monthState.managerNote,
+          profile.profileHash
         );
 
         return {
@@ -675,6 +762,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
           managerSignature: {
             signedBy: signer,
             signedAt,
+            profileHash: profile.profileHash,
             signatureHash,
             declaration: MANAGER_SIGNATURE_DECLARATION,
             revisionNo: monthState.revisionNo
@@ -693,7 +781,14 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
       return { ok: true, message: "Manager electronic signature captured." };
     },
-    [currentMonthData.employeeSignature, currentMonthData.revisionNo, currentMonthData.status, selectedMonth, updateCurrentMonth]
+    [
+      currentMonthData.employeeSignature,
+      currentMonthData.revisionNo,
+      currentMonthData.status,
+      selectedMonth,
+      signatureProfiles.MANAGER,
+      updateCurrentMonth
+    ]
   );
 
   const submitTimesheet = useCallback(() => {
@@ -957,6 +1052,44 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     setPlannedLeave((prior) => prior.filter((item) => item.id !== id));
   }, []);
 
+  const upsertSignatureProfile = useCallback((role: SignatoryRole, fullName: string) => {
+    const normalizedName = fullName.trim();
+
+    if (normalizedName.length < 3) {
+      return { ok: false, message: "Full name must have at least 3 characters." };
+    }
+
+    const declaration = role === "EMPLOYEE" ? EMPLOYEE_SIGNATURE_DECLARATION : MANAGER_SIGNATURE_DECLARATION;
+    const profileHash = hashForBatch(
+      JSON.stringify({
+        role,
+        fullName: normalizedName,
+        declaration
+      })
+    );
+
+    setSignatureProfiles((prior) => ({
+      ...prior,
+      [role]: {
+        role,
+        fullName: normalizedName,
+        setupAt: nowIso(),
+        profileHash,
+        declaration
+      }
+    }));
+
+    return { ok: true, message: `${role} signature profile saved.` };
+  }, []);
+
+  const clearSignatureProfile = useCallback((role: SignatoryRole) => {
+    setSignatureProfiles((prior) => {
+      const next = { ...prior };
+      delete next[role];
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -971,7 +1104,11 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         }
 
         const payload = (await response.json()) as {
-          data?: { months?: Record<string, MonthTimesheetState>; plannedLeave?: PlannedLeaveRecord[] };
+          data?: {
+            months?: Record<string, MonthTimesheetState>;
+            plannedLeave?: PlannedLeaveRecord[];
+            signatureProfiles?: Partial<Record<SignatoryRole, SignatureProfile>>;
+          };
         };
 
         if (cancelled) {
@@ -980,6 +1117,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
         const loadedMonths = payload.data?.months;
         const loadedPlannedLeave = payload.data?.plannedLeave;
+        const loadedSignatureProfiles = payload.data?.signatureProfiles;
 
         if (loadedMonths && Object.keys(loadedMonths).length > 0) {
           setMonths((prior) => {
@@ -995,6 +1133,10 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
         if (Array.isArray(loadedPlannedLeave)) {
           setPlannedLeave(loadedPlannedLeave);
+        }
+
+        if (loadedSignatureProfiles) {
+          setSignatureProfiles(normalizeSignatureProfiles(loadedSignatureProfiles));
         }
 
         setSqliteSync({ state: "ready", message: "SQLite loaded", lastSavedAt: null });
@@ -1036,7 +1178,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
           },
           body: JSON.stringify({
             months,
-            plannedLeave
+            plannedLeave,
+            signatureProfiles
           })
         });
 
@@ -1057,7 +1200,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     return () => {
       window.clearTimeout(timeout);
     };
-  }, [hydratedFromSqlite, months, plannedLeave]);
+  }, [hydratedFromSqlite, months, plannedLeave, signatureProfiles]);
 
   const selectedYear = Number(selectedMonth.slice(0, 4));
 
@@ -1121,6 +1264,9 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     plannedLeave,
     addPlannedLeave,
     removePlannedLeave,
+    signatureProfiles,
+    upsertSignatureProfile,
+    clearSignatureProfile,
     leaveSummary
   };
 

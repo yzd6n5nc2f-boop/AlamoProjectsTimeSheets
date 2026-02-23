@@ -20,7 +20,7 @@ export function PayrollDashboardPage() {
 
   return (
     <Panel
-      title="Payroll Validation Dashboard"
+      title="Payroll"
       subtitle={`Exception-focused validation and export readiness for ${periodDisplayLabel}`}
       actions={<StatusChip label={status.replaceAll("_", " ")} tone={statusTone(status)} />}
     >

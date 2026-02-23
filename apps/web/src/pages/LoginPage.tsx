@@ -11,10 +11,10 @@ const ROLE_DESTINATION: Record<AppRole, string> = {
 };
 
 const ROLE_DESCRIPTIONS: Record<AppRole, string> = {
-  EMPLOYEE: "Enter monthly rows with projects/hours and plan annual leave",
-  MANAGER: "Approve/reject OT and PH worked",
-  PAYROLL: "Resolve exceptions, validate, export, lock",
-  ADMIN: "Manage calendar rules and leave settings"
+  EMPLOYEE: "Enter monthly timesheet, plan leave, track workflow status, and apply employee signature",
+  MANAGER: "Review queue, approve/reject, and apply manager signature",
+  PAYROLL: "Validate exceptions, create export batches, and lock periods",
+  ADMIN: "Manage calendar and leave policy settings"
 };
 
 export function LoginPage() {

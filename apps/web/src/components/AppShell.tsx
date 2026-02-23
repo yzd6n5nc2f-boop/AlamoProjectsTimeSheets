@@ -2,26 +2,42 @@ import { type PropsWithChildren } from "react";
 import { NavLink } from "react-router-dom";
 import { BRANDING } from "@timesheet/shared";
 import { statusTone } from "../lib/ui";
-import { useAppState } from "../state/AppStateContext";
+import { useAppState, type AppRole } from "../state/AppStateContext";
 import { StatusChip } from "./StatusChip";
 import workbookLogoLockup from "../assets/workbook-logo-lockup.png";
 
-const links = [
-  ["/", "Login"],
-  ["/employee", "Employee Dashboard"],
-  ["/timesheet", "Timesheet Grid"],
-  ["/leave/planner", "Leave Planner"],
-  ["/history", "History"],
-  ["/manager/queue", "Manager Queue"],
-  ["/manager/review", "Manager Review"],
-  ["/payroll/dashboard", "Payroll Dashboard"],
-  ["/payroll/export", "Payroll Export"],
-  ["/admin/rules", "Admin Rules"],
-  ["/admin/leave", "Leave Admin"]
-] as const;
+const ROLE_LINKS: Record<AppRole, ReadonlyArray<readonly [string, string]>> = {
+  EMPLOYEE: [
+    ["/", "Login"],
+    ["/employee", "Employee Home"],
+    ["/timesheet", "Timesheet"],
+    ["/leave/planner", "Leave Planner"],
+    ["/history", "Status"],
+    ["/signature/setup", "Signature Setup"]
+  ],
+  MANAGER: [
+    ["/", "Login"],
+    ["/manager/queue", "Manager Queue"],
+    ["/manager/review", "Manager Review"],
+    ["/history", "Status"],
+    ["/signature/setup", "Signature Setup"]
+  ],
+  PAYROLL: [
+    ["/", "Login"],
+    ["/payroll/dashboard", "Payroll"],
+    ["/payroll/export", "Payroll Export"],
+    ["/history", "Status"]
+  ],
+  ADMIN: [
+    ["/", "Login"],
+    ["/admin/rules", "Admin Rules"],
+    ["/admin/leave", "Leave Admin"]
+  ]
+};
 
 export function AppShell({ children }: PropsWithChildren) {
   const { role, status, periodDisplayLabel, currentDateIso } = useAppState();
+  const links = ROLE_LINKS[role];
 
   return (
     <div className="layout">

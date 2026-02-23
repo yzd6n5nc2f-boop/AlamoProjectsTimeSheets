@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Panel } from "../components/Panel";
 import { StatusChip } from "../components/StatusChip";
 import { minutesToHoursString, sumProjectHours } from "../lib/timesheetEngine";
@@ -13,6 +14,7 @@ export function ManagerReviewPage() {
     setManagerNote,
     employeeSignature,
     managerSignature,
+    signatureProfiles,
     signAsManager,
     managerApprove,
     managerReject,
@@ -20,9 +22,10 @@ export function ManagerReviewPage() {
     periodDisplayLabel
   } = useAppState();
   const [message, setMessage] = useState("");
-  const [managerSigner, setManagerSigner] = useState("");
+  const navigate = useNavigate();
 
   const canDecide = status === "SUBMITTED";
+  const managerProfile = signatureProfiles.MANAGER;
 
   return (
     <Panel
@@ -93,22 +96,23 @@ export function ManagerReviewPage() {
         ) : (
           <p className="subtle-note">Employee must electronically sign before manager can sign.</p>
         )}
-        <div className="signature-form">
-          <label className="field">
-            Manager full name
-            <input
-              value={managerSigner}
-              onChange={(event) => setManagerSigner(event.target.value)}
-              placeholder="Type full legal name"
-              disabled={!canDecide}
-            />
-          </label>
+        {managerProfile ? (
+          <p className="subtle-note">
+            Using saved profile: {managerProfile.fullName} | hash {managerProfile.profileHash}
+          </p>
+        ) : (
+          <p className="subtle-note">No manager signature profile found. Set it up once and reuse it for approvals.</p>
+        )}
+        <div className="inline-actions">
+          <button type="button" className="btn" onClick={() => navigate("/signature/setup")}>
+            Set Up Signature
+          </button>
           <button
             type="button"
             className="btn btn-primary"
-            disabled={!canDecide}
+            disabled={!canDecide || !managerProfile}
             onClick={() => {
-              const result = signAsManager(managerSigner);
+              const result = signAsManager(managerProfile?.fullName ?? "");
               setMessage(result.message);
             }}
           >

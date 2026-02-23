@@ -8,8 +8,8 @@ export function HistoryPage() {
 
   return (
     <Panel
-      title="History"
-      subtitle={`Revision chain and approval/audit timeline for ${periodDisplayLabel}`}
+      title="Workflow Status"
+      subtitle={`Revision chain and approval timeline for ${periodDisplayLabel}`}
       actions={<StatusChip label={`Revision ${revisionNo}`} tone="info" />}
     >
       <p>
