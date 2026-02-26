@@ -1,0 +1,37 @@
+{
+  "name": "@timesheet/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "echo 'lint not configured for api package yet'",
+    "db:migrate": "node dist/scripts/migrate.js",
+    "db:seed": "node dist/scripts/seed.js",
+    "db:migrate:dev": "tsx src/scripts/migrate.ts",
+    "db:seed:dev": "tsx src/scripts/seed.ts"
+  },
+  "dependencies": {
+    "@timesheet/shared": "0.1.0",
+    "better-sqlite3": "^11.8.1",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "helmet": "^8.1.0",
+    "pg": "^8.13.3",
+    "pino": "^9.6.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.13.10",
+    "@types/pg": "^8.11.11",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}

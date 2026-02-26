@@ -1,0 +1,35 @@
+{
+  "name": "timesheet-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Timesheet for Alamo Projects monorepo",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev --workspace @timesheet/api\" \"npm run dev --workspace @timesheet/web\"",
+    "dev:api": "npm run dev --workspace @timesheet/api",
+    "dev:web": "npm run dev --workspace @timesheet/web",
+    "build": "npm run build --workspace @timesheet/shared && npm run build --workspace @timesheet/api && npm run build --workspace @timesheet/web",
+    "start:api": "npm run start --workspace @timesheet/api",
+    "start:web": "npm run preview --workspace @timesheet/web -- --host 0.0.0.0 --port 3000",
+    "typecheck": "npm run typecheck --workspace @timesheet/shared && npm run typecheck --workspace @timesheet/api && npm run typecheck --workspace @timesheet/web",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "db:migrate": "npm run db:migrate --workspace @timesheet/api",
+    "db:seed": "npm run db:seed --workspace @timesheet/api",
+    "infra:up:staging": "docker compose -f infra/docker-compose.staging.yml --env-file infra/env/.env.staging up -d --build",
+    "infra:down:staging": "docker compose -f infra/docker-compose.staging.yml --env-file infra/env/.env.staging down",
+    "infra:migrate:staging": "docker compose -f infra/docker-compose.staging.yml --env-file infra/env/.env.staging run --rm api-migrate",
+    "infra:seed:staging": "docker compose -f infra/docker-compose.staging.yml --env-file infra/env/.env.staging run --rm api-seed"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "turbo": "^2.3.3",
+    "typescript": "^5.8.2"
+  },
+  "engines": {
+    "node": ">=20.11.0"
+  }
+}
