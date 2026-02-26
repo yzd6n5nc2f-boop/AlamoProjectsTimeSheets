@@ -37,8 +37,18 @@ export interface ExportBatch {
 
 export interface PlannedLeaveRecord {
   id: string;
-  date: string;
-  hours: number;
+  startDate: string;
+  endDate: string;
+  workdays: number;
+  hoursPerDay: number;
+  totalHours: number;
+  note: string;
+}
+
+export interface PlannedLeaveInput {
+  startDate: string;
+  endDate: string;
+  hoursPerDay: number;
   note: string;
 }
 
@@ -113,7 +123,7 @@ interface AppStateValue {
   updateRuleSettings: (patch: Partial<RuleSettings>) => void;
   annualLeaveEntitlementHours: number;
   plannedLeave: PlannedLeaveRecord[];
-  addPlannedLeave: (payload: Omit<PlannedLeaveRecord, "id">) => { ok: boolean; message: string };
+  addPlannedLeave: (payload: PlannedLeaveInput) => { ok: boolean; message: string };
   removePlannedLeave: (id: string) => void;
   signatureProfiles: Partial<Record<SignatoryRole, SignatureProfile>>;
   upsertSignatureProfile: (role: SignatoryRole, fullName: string) => { ok: boolean; message: string };
@@ -145,6 +155,7 @@ const EMPLOYEE_SIGNATURE_DECLARATION =
   "I certify this monthly timesheet is true and complete to the best of my knowledge.";
 const MANAGER_SIGNATURE_DECLARATION =
   "I approve this monthly timesheet after review and confirm approvals for overtime/public holiday work where required.";
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -159,6 +170,131 @@ function daysInMonth(monthKey: string): number {
   const year = Number(yearText);
   const month = Number(monthText);
   return new Date(year, month, 0).getDate();
+}
+
+function parseIsoDate(dateValue: string): Date | null {
+  if (!ISO_DATE_PATTERN.test(dateValue)) {
+    return null;
+  }
+
+  const [yearText, monthText, dayText] = dateValue.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const date = new Date(year, month - 1, day);
+
+  if (date.getFullYear() !== year || date.getMonth() + 1 !== month || date.getDate() !== day) {
+    return null;
+  }
+
+  return date;
+}
+
+function toIsoDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function isWeekday(date: Date): boolean {
+  const weekday = date.getDay();
+  return weekday !== 0 && weekday !== 6;
+}
+
+function countWeekdaysInRange(startDate: string, endDate: string): number {
+  const start = parseIsoDate(startDate);
+  const end = parseIsoDate(endDate);
+
+  if (!start || !end || start > end) {
+    return 0;
+  }
+
+  const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  let count = 0;
+
+  while (cursor <= end) {
+    if (isWeekday(cursor)) {
+      count += 1;
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return count;
+}
+
+function plannedHoursInYear(record: PlannedLeaveRecord, year: number): number {
+  const start = parseIsoDate(record.startDate);
+  const end = parseIsoDate(record.endDate);
+
+  if (!start || !end || start > end) {
+    return 0;
+  }
+
+  const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  let hours = 0;
+
+  while (cursor <= end) {
+    if (cursor.getFullYear() === year && isWeekday(cursor)) {
+      hours += record.hoursPerDay;
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return Number(hours.toFixed(2));
+}
+
+function normalizePlannedLeaveRecord(rawRecord: unknown): PlannedLeaveRecord | null {
+  if (!rawRecord || typeof rawRecord !== "object") {
+    return null;
+  }
+
+  const raw = rawRecord as {
+    id?: unknown;
+    date?: unknown;
+    startDate?: unknown;
+    endDate?: unknown;
+    hours?: unknown;
+    hoursPerDay?: unknown;
+    workdays?: unknown;
+    totalHours?: unknown;
+    note?: unknown;
+  };
+
+  const fallbackDate = typeof raw.date === "string" ? raw.date : "";
+  const startDate = typeof raw.startDate === "string" ? raw.startDate : fallbackDate;
+  const endDate = typeof raw.endDate === "string" ? raw.endDate : startDate;
+  const parsedStart = parseIsoDate(startDate);
+  const parsedEnd = parseIsoDate(endDate);
+
+  if (!parsedStart || !parsedEnd || parsedStart > parsedEnd) {
+    return null;
+  }
+
+  const normalizedStart = toIsoDate(parsedStart);
+  const normalizedEnd = toIsoDate(parsedEnd);
+  const normalizedHoursPerDay = Number(raw.hoursPerDay ?? raw.hours ?? 0);
+  const hoursPerDay = Number.isFinite(normalizedHoursPerDay) ? Math.max(0, normalizedHoursPerDay) : 0;
+
+  if (hoursPerDay <= 0) {
+    return null;
+  }
+
+  const derivedWorkdays = countWeekdaysInRange(normalizedStart, normalizedEnd);
+  const workdaysFromPayload = Number(raw.workdays);
+  const workdays = Number.isFinite(workdaysFromPayload) && workdaysFromPayload > 0 ? workdaysFromPayload : derivedWorkdays;
+  const totalHoursFromPayload = Number(raw.totalHours);
+  const totalHours =
+    Number.isFinite(totalHoursFromPayload) && totalHoursFromPayload > 0
+      ? totalHoursFromPayload
+      : Number((workdays * hoursPerDay).toFixed(2));
+
+  return {
+    id: typeof raw.id === "string" && raw.id.length > 0 ? raw.id : `PL-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+    startDate: normalizedStart,
+    endDate: normalizedEnd,
+    workdays,
+    hoursPerDay,
+    totalHours,
+    note: typeof raw.note === "string" ? raw.note : ""
+  };
 }
 
 function createProjectLine(hours = 0, projectDescription = ""): ProjectLine {
@@ -1032,20 +1168,50 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     [updateCurrentMonth]
   );
 
-  const addPlannedLeave = useCallback((payload: Omit<PlannedLeaveRecord, "id">) => {
-    if (!payload.date || payload.hours <= 0) {
-      return { ok: false, message: "Date and hours are required." };
+  const addPlannedLeave = useCallback((payload: PlannedLeaveInput) => {
+    const start = parseIsoDate(payload.startDate);
+    const end = parseIsoDate(payload.endDate);
+    const hoursPerDay = Number(payload.hoursPerDay);
+
+    if (!start || !end) {
+      return { ok: false, message: "Start date and end date are required." };
     }
+
+    if (start > end) {
+      return { ok: false, message: "End date must be on or after start date." };
+    }
+
+    if (!Number.isFinite(hoursPerDay) || hoursPerDay <= 0) {
+      return { ok: false, message: "Hours per day must be greater than zero." };
+    }
+
+    const normalizedStart = toIsoDate(start);
+    const normalizedEnd = toIsoDate(end);
+    const workdays = countWeekdaysInRange(normalizedStart, normalizedEnd);
+
+    if (workdays === 0) {
+      return { ok: false, message: "Selected range has no working days. Choose at least one weekday." };
+    }
+
+    const totalHours = Number((workdays * hoursPerDay).toFixed(2));
 
     setPlannedLeave((prior) => [
       {
-        id: `PL-${Date.now()}`,
-        ...payload
+        id: `PL-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+        startDate: normalizedStart,
+        endDate: normalizedEnd,
+        workdays,
+        hoursPerDay,
+        totalHours,
+        note: payload.note.trim()
       },
       ...prior
     ]);
 
-    return { ok: true, message: "Planned leave recorded." };
+    return {
+      ok: true,
+      message: `Planned leave saved for ${workdays} workday${workdays === 1 ? "" : "s"} (${totalHours.toFixed(2)}h total).`
+    };
   }, []);
 
   const removePlannedLeave = useCallback((id: string) => {
@@ -1106,7 +1272,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         const payload = (await response.json()) as {
           data?: {
             months?: Record<string, MonthTimesheetState>;
-            plannedLeave?: PlannedLeaveRecord[];
+            plannedLeave?: unknown[];
             signatureProfiles?: Partial<Record<SignatoryRole, SignatureProfile>>;
           };
         };
@@ -1132,7 +1298,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         }
 
         if (Array.isArray(loadedPlannedLeave)) {
-          setPlannedLeave(loadedPlannedLeave);
+          setPlannedLeave(loadedPlannedLeave.map((record) => normalizePlannedLeaveRecord(record)).filter((record): record is PlannedLeaveRecord => record !== null));
         }
 
         if (loadedSignatureProfiles) {
@@ -1211,8 +1377,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       .reduce((sum) => sum + ruleSettings.leavePaidMinutesDefault / 60, 0);
 
     const plannedHours = plannedLeave
-      .filter((record) => record.date.startsWith(`${selectedYear}-`))
-      .reduce((sum, record) => sum + record.hours, 0);
+      .reduce((sum, record) => sum + plannedHoursInYear(record, selectedYear), 0);
 
     const remainingAfterTaken = ANNUAL_LEAVE_ENTITLEMENT_HOURS - takenHours;
     const remainingAfterPlanned = remainingAfterTaken - plannedHours;

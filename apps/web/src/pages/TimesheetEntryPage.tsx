@@ -63,6 +63,24 @@ function groupByWorkWeeks(entries: DayEntry[]): Array<{ label: string; entries: 
   return groups;
 }
 
+function buildMonthCalendarDays(monthKey: string): Array<{ date: string; day: number }> {
+  const [yearText, monthText] = monthKey.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return [];
+  }
+
+  const totalDays = new Date(year, month, 0).getDate();
+
+  return Array.from({ length: totalDays }, (_, index) => {
+    const day = index + 1;
+    const date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    return { date, day };
+  });
+}
+
 export function TimesheetEntryPage() {
   const {
     status,
@@ -83,12 +101,25 @@ export function TimesheetEntryPage() {
     sqliteSync
   } = useAppState();
   const [message, setMessage] = useState<string>("");
+  const [showMonthCalendar, setShowMonthCalendar] = useState(false);
+  const [focusedDate, setFocusedDate] = useState<string>("");
   const navigate = useNavigate();
 
   const editable = isEditable(status);
   const employeeProfile = signatureProfiles.EMPLOYEE;
 
   const groupedWeeks = useMemo(() => groupByWorkWeeks(dayEntries), [dayEntries]);
+  const monthCalendarDays = useMemo(() => buildMonthCalendarDays(selectedMonth), [selectedMonth]);
+  const monthStartWeekday = useMemo(() => new Date(`${selectedMonth}-01T00:00:00`).getDay(), [selectedMonth]);
+  const dayEntryDates = useMemo(() => new Set(dayEntries.map((entry) => entry.date)), [dayEntries]);
+
+  const jumpToDate = (date: string) => {
+    setFocusedDate(date);
+    const row = document.getElementById(`timesheet-day-${date}`);
+    if (row) {
+      row.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
 
   return (
     <Panel
@@ -126,6 +157,9 @@ export function TimesheetEntryPage() {
             <button type="button" className="btn" onClick={() => setSelectedMonth(shiftMonthKey(selectedMonth, 1))}>
               Next Month
             </button>
+            <button type="button" className="btn" onClick={() => setShowMonthCalendar((prior) => !prior)}>
+              {showMonthCalendar ? "Hide Month Calendar" : "Open Month Calendar"}
+            </button>
           </div>
         </div>
         <label className="field inline-field">
@@ -133,6 +167,53 @@ export function TimesheetEntryPage() {
           <input value={currentDateIso} readOnly />
         </label>
       </div>
+
+      {showMonthCalendar ? (
+        <section className="month-calendar-panel">
+          <div className="month-calendar-head">
+            <h3>{periodDisplayLabel}</h3>
+            <p className="subtle-note">Click a weekday to jump directly to that day row.</p>
+          </div>
+          <div className="calendar-weekday-row">
+            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((weekday) => (
+              <span key={weekday} className="calendar-weekday">
+                {weekday}
+              </span>
+            ))}
+          </div>
+          <div className="calendar-grid">
+            {Array.from({ length: monthStartWeekday }, (_, index) => (
+              <span key={`offset-${index}`} className="calendar-day-placeholder" aria-hidden="true" />
+            ))}
+            {monthCalendarDays.map((day) => {
+              const hasEntry = dayEntryDates.has(day.date);
+              const isCurrentDay = day.date === currentDateIso;
+              const isFocusedDay = day.date === focusedDate;
+              const className = [
+                "calendar-day",
+                hasEntry ? "calendar-day-workday" : "calendar-day-weekend",
+                isCurrentDay ? "calendar-day-current" : "",
+                isFocusedDay ? "calendar-day-focused" : ""
+              ]
+                .filter(Boolean)
+                .join(" ");
+
+              return (
+                <button
+                  key={day.date}
+                  type="button"
+                  className={className}
+                  disabled={!hasEntry}
+                  onClick={() => jumpToDate(day.date)}
+                >
+                  <span>{day.day}</span>
+                  <small>{hasEntry ? "Entry" : "Weekend"}</small>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
 
       <section className="signature-panel">
         <div className="signature-panel-head">
@@ -225,8 +306,11 @@ export function TimesheetEntryPage() {
 
                     return (
                       <tr
+                        id={`timesheet-day-${entry.date}`}
                         key={entry.date}
-                        className={`${errors.length > 0 ? "row-error" : ""} ${isToday ? "row-current" : ""}`.trim()}
+                        className={`${errors.length > 0 ? "row-error" : ""} ${isToday ? "row-current" : ""} ${
+                          focusedDate === entry.date ? "row-focused" : ""
+                        }`.trim()}
                       >
                         <td>{formatDate(entry.date)}</td>
                         <td>

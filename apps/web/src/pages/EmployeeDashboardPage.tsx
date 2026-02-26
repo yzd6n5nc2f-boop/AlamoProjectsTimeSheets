@@ -1,5 +1,4 @@
 import { useNavigate } from "react-router-dom";
-import { MetricCard } from "../components/MetricCard";
 import { Panel } from "../components/Panel";
 import { StatusChip } from "../components/StatusChip";
 import { minutesToHoursString } from "../lib/timesheetEngine";
@@ -20,10 +19,19 @@ export function EmployeeDashboardPage() {
     leaveSummary
   } = useAppState();
 
+  const leaveStatusTone =
+    leaveSummary.remainingAfterPlanned < 0 ? "bad" : leaveSummary.remainingAfterPlanned < 16 ? "warn" : "good";
+  const leaveStatusLabel =
+    leaveSummary.remainingAfterPlanned < 0
+      ? "Over Planned"
+      : leaveSummary.remainingAfterPlanned < 16
+        ? "Low Balance"
+        : "On Track";
+
   return (
     <Panel
       title="Employee Dashboard"
-      subtitle="Month-by-month timesheet summary and quick actions"
+      subtitle="Month-by-month summary with quick access to timesheet and leave"
       actions={<StatusChip label={status.replaceAll("_", " ")} tone={statusTone(status)} />}
     >
       <div className="form-grid">
@@ -41,15 +49,41 @@ export function EmployeeDashboardPage() {
         </div>
       </div>
 
-      <div className="metrics-grid">
-        <MetricCard label="Current Date" value={currentDateIso} />
-        <MetricCard label="Selected Month" value={periodDisplayLabel} />
-        <MetricCard label="Period Key" value={periodLabel} />
-        <MetricCard label="Revision" value={String(revisionNo)} />
-        <MetricCard label="Normal Hours" value={minutesToHoursString(computed.periodTotals.normalMinutes)} />
-        <MetricCard label="Overtime" value={minutesToHoursString(computed.periodTotals.overtimeMinutes)} />
-        <MetricCard label="Leave" value={minutesToHoursString(computed.periodTotals.leaveMinutes)} />
-        <MetricCard label="Annual Leave Remaining" value={leaveSummary.remainingAfterPlanned.toFixed(2)} />
+      <div className="dashboard-summary-row">
+        <span>
+          Current Date <strong>{currentDateIso}</strong>
+        </span>
+        <span>
+          Month <strong>{periodDisplayLabel}</strong>
+        </span>
+        <span>
+          Period Key <strong>{periodLabel}</strong>
+        </span>
+        <span>
+          Revision <strong>{revisionNo}</strong>
+        </span>
+        <span>
+          Leave Status <StatusChip label={leaveStatusLabel} tone={leaveStatusTone} />
+        </span>
+      </div>
+
+      <div className="dashboard-summary-metrics">
+        <div className="dashboard-summary-metric">
+          <p>Normal</p>
+          <strong>{minutesToHoursString(computed.periodTotals.normalMinutes)}h</strong>
+        </div>
+        <div className="dashboard-summary-metric">
+          <p>Overtime</p>
+          <strong>{minutesToHoursString(computed.periodTotals.overtimeMinutes)}h</strong>
+        </div>
+        <div className="dashboard-summary-metric">
+          <p>Leave</p>
+          <strong>{minutesToHoursString(computed.periodTotals.leaveMinutes)}h</strong>
+        </div>
+        <div className="dashboard-summary-metric">
+          <p>Annual Leave Remaining</p>
+          <strong>{leaveSummary.remainingAfterPlanned.toFixed(2)}h</strong>
+        </div>
       </div>
 
       <div className="inline-actions">

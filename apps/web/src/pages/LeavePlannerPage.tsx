@@ -4,6 +4,54 @@ import { Panel } from "../components/Panel";
 import { StatusChip } from "../components/StatusChip";
 import { useAppState } from "../state/AppStateContext";
 
+function parseIsoDate(dateValue: string): Date | null {
+  const pattern = /^\d{4}-\d{2}-\d{2}$/;
+
+  if (!pattern.test(dateValue)) {
+    return null;
+  }
+
+  const [yearText, monthText, dayText] = dateValue.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const date = new Date(year, month - 1, day);
+
+  if (date.getFullYear() !== year || date.getMonth() + 1 !== month || date.getDate() !== day) {
+    return null;
+  }
+
+  return date;
+}
+
+function countWeekdaysInRange(startDate: string, endDate: string): number {
+  const start = parseIsoDate(startDate);
+  const end = parseIsoDate(endDate);
+
+  if (!start || !end || start > end) {
+    return 0;
+  }
+
+  const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  let days = 0;
+
+  while (cursor <= end) {
+    const weekday = cursor.getDay();
+    if (weekday !== 0 && weekday !== 6) {
+      days += 1;
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return days;
+}
+
+function isInYearRange(startDate: string, endDate: string, year: number): boolean {
+  const startYear = Number(startDate.slice(0, 4));
+  const endYear = Number(endDate.slice(0, 4));
+  return startYear <= year && endYear >= year;
+}
+
 export function LeavePlannerPage() {
   const {
     leaveSummary,
@@ -13,13 +61,17 @@ export function LeavePlannerPage() {
     selectedMonth
   } = useAppState();
 
-  const [date, setDate] = useState(`${selectedMonth}-15`);
-  const [hours, setHours] = useState(8);
+  const [startDate, setStartDate] = useState(`${selectedMonth}-15`);
+  const [endDate, setEndDate] = useState(`${selectedMonth}-15`);
+  const [hoursPerDay, setHoursPerDay] = useState(8);
   const [note, setNote] = useState("Planned annual leave");
   const [message, setMessage] = useState("");
 
+  const previewWorkdays = useMemo(() => countWeekdaysInRange(startDate, endDate), [endDate, startDate]);
+  const previewTotalHours = useMemo(() => Number((previewWorkdays * hoursPerDay).toFixed(2)), [hoursPerDay, previewWorkdays]);
+
   const plannedForYear = useMemo(
-    () => plannedLeave.filter((item) => item.date.startsWith(`${leaveSummary.year}-`)),
+    () => plannedLeave.filter((item) => isInYearRange(item.startDate, item.endDate, leaveSummary.year)),
     [leaveSummary.year, plannedLeave]
   );
 
@@ -41,18 +93,23 @@ export function LeavePlannerPage() {
 
       <div className="form-grid">
         <label className="field">
-          Planned date
-          <input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+          Planned from
+          <input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
         </label>
 
         <label className="field">
-          Planned hours
+          Planned to
+          <input type="date" value={endDate} min={startDate} onChange={(event) => setEndDate(event.target.value)} />
+        </label>
+
+        <label className="field">
+          Hours per day
           <input
             type="number"
             min={0.5}
             step={0.5}
-            value={hours}
-            onChange={(event) => setHours(Number(event.target.value) || 0)}
+            value={hoursPerDay}
+            onChange={(event) => setHoursPerDay(Number(event.target.value) || 0)}
           />
         </label>
 
@@ -62,16 +119,20 @@ export function LeavePlannerPage() {
         </label>
       </div>
 
+      <p className="subtle-note">
+        Preview: {previewWorkdays} workday{previewWorkdays === 1 ? "" : "s"} | {previewTotalHours.toFixed(2)} planned hours.
+      </p>
+
       <div className="inline-actions">
         <button
           type="button"
           className="btn btn-primary"
           onClick={() => {
-            const result = addPlannedLeave({ date, hours, note });
+            const result = addPlannedLeave({ startDate, endDate, hoursPerDay, note });
             setMessage(result.message);
           }}
         >
-          Add Planned Leave
+          Add Planned Leave Range
         </button>
       </div>
 
@@ -79,8 +140,11 @@ export function LeavePlannerPage() {
         <table className="table-grid compact">
           <thead>
             <tr>
-              <th>Date</th>
-              <th>Hours</th>
+              <th>From</th>
+              <th>To</th>
+              <th>Workdays</th>
+              <th>Hours/Day</th>
+              <th>Total Hours</th>
               <th>Note</th>
               <th>Action</th>
             </tr>
@@ -88,13 +152,16 @@ export function LeavePlannerPage() {
           <tbody>
             {plannedForYear.length === 0 ? (
               <tr>
-                <td colSpan={4}>No planned leave records for this year.</td>
+                <td colSpan={7}>No planned leave records for this year.</td>
               </tr>
             ) : (
               plannedForYear.map((item) => (
                 <tr key={item.id}>
-                  <td>{item.date}</td>
-                  <td>{item.hours.toFixed(2)}</td>
+                  <td>{item.startDate}</td>
+                  <td>{item.endDate}</td>
+                  <td>{item.workdays}</td>
+                  <td>{item.hoursPerDay.toFixed(2)}</td>
+                  <td>{item.totalHours.toFixed(2)}</td>
                   <td>{item.note || "--"}</td>
                   <td>
                     <button type="button" className="btn" onClick={() => removePlannedLeave(item.id)}>
